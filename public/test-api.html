@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>项目工作台 - API测试</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { color: #1e293b; margin-bottom: 20px; }
+        .status { padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .status.ok { background: #dcfce7; border: 1px solid #86efac; }
+        .status.error { background: #fee2e2; border: 1px solid #fca5a5; }
+        .endpoint { background: white; padding: 15px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #e2e8f0; }
+        .endpoint h3 { color: #334155; margin-bottom: 10px; }
+        .endpoint pre { background: #f1f5f9; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
+        .btn { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; margin-right: 10px; }
+        .btn:hover { background: #2563eb; }
+        .login-test { background: white; padding: 20px; border-radius: 8px; margin-top: 20px; }
+        .login-test input { padding: 10px; border: 1px solid #cbd5e1; border-radius: 4px; margin: 5px; width: 200px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 项目工作台 - API 诊断测试</h1>
+        
+        <div id="healthStatus" class="status">检测中...</div>
+        
+        <h2>API 端点测试</h2>
+        <div class="endpoint">
+            <h3>GET /api/members</h3>
+            <pre id="membersResult">点击测试...</pre>
+            <button class="btn" onclick="testMembers()">测试</button>
+        </div>
+        
+        <div class="endpoint">
+            <h3>GET /api/projects</h3>
+            <pre id="projectsResult">点击测试...</pre>
+            <button class="btn" onclick="testProjects()">测试</button>
+        </div>
+        
+        <div class="login-test">
+            <h2>🔐 登录测试</h2>
+            <p>使用以下账号登录：</p>
+            <ul>
+                <li>邮箱: <code>cio@grinm.com</code> | 密码: <code>admin123</code></li>
+                <li>邮箱: <code>wang@grinm.com</code> | 密码: <code>wang123</code></li>
+            </ul>
+            <div style="margin-top: 15px;">
+                <input type="email" id="loginEmail" placeholder="邮箱" value="cio@grinm.com">
+                <input type="password" id="loginPassword" placeholder="密码" value="admin123">
+                <button class="btn" onclick="testLogin()">测试登录</button>
+            </div>
+            <pre id="loginResult" style="margin-top: 10px;"></pre>
+        </div>
+        
+        <h2 style="margin-top: 30px;">💡 使用说明</h2>
+        <ul style="margin-left: 20px; line-height: 2;">
+            <li><strong>前端地址：</strong><a href="http://localhost:5173" target="_blank">http://localhost:5173</a></li>
+            <li><strong>后端地址：</strong><a href="http://localhost:3000" target="_blank">http://localhost:3000</a></li>
+            <li>不要直接在浏览器访问后端地址，应该访问前端</li>
+        </ul>
+    </div>
+    
+    <script>
+        const API_BASE = 'http://localhost:3000/api';
+        
+        async function checkHealth() {
+            try {
+                const res = await fetch(`${API_BASE}/health`);
+                const data = await res.json();
+                document.getElementById('healthStatus').className = 'status ok';
+                document.getElementById('healthStatus').textContent = `✅ 后端服务正常: ${data.server} @ ${new Date().toLocaleTimeString()}`;
+                testMembers();
+                testProjects();
+            } catch (err) {
+                document.getElementById('healthStatus').className = 'status error';
+                document.getElementById('healthStatus').textContent = `❌ 后端服务异常: ${err.message}`;
+            }
+        }
+        
+        async function testMembers() {
+            try {
+                const res = await fetch(`${API_BASE}/members`);
+                const data = await res.json();
+                document.getElementById('membersResult').textContent = JSON.stringify(data, null, 2);
+            } catch (err) {
+                document.getElementById('membersResult').textContent = `错误: ${err.message}`;
+            }
+        }
+        
+        async function testProjects() {
+            try {
+                const res = await fetch(`${API_BASE}/projects`);
+                const data = await res.json();
+                document.getElementById('projectsResult').textContent = JSON.stringify(data, null, 2);
+            } catch (err) {
+                document.getElementById('projectsResult').textContent = `错误: ${err.message}`;
+            }
+        }
+        
+        async function testLogin() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            try {
+                const res = await fetch(`${API_BASE}/members`);
+                const members = await res.json();
+                const member = members.find(m => m.email === email && m.password === password);
+                
+                if (member) {
+                    document.getElementById('loginResult').style.color = 'green';
+                    document.getElementById('loginResult').textContent = `✅ 登录成功！欢迎, ${member.name}`;
+                    // Redirect to frontend after successful test
+                    setTimeout(() => {
+                        window.open('http://localhost:5173', '_blank');
+                    }, 1000);
+                } else {
+                    document.getElementById('loginResult').style.color = 'red';
+                    document.getElementById('loginResult').textContent = `❌ 邮箱或密码错误`;
+                }
+            } catch (err) {
+                document.getElementById('loginResult').style.color = 'red';
+                document.getElementById('loginResult').textContent = `错误: ${err.message}`;
+            }
+        }
+        
+        // Run health check on load
+        checkHealth();
+    </script>
+</body>
+</html>

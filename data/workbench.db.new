@@ -1,0 +1,64 @@
+{
+  "members": [
+    {
+      "id": "mem_1",
+      "name": "信息化总监",
+      "role": "admin",
+      "department": "信息化中心",
+      "title": "信息化总监",
+      "email": "cio@grinm.com",
+      "password": "admin123",
+      "phone": "",
+      "projectIds": [
+        "proj_mom",
+        "proj_erp"
+      ],
+      "avatarColor": "#ef4444",
+      "createdAt": "2026-08-12T20:53:55.409709Z",
+      "updatedAt": "2026-08-12T20:53:55.409709Z"
+    },
+    {
+      "id": "mem_2",
+      "name": "王工",
+      "role": "pm",
+      "department": "信息化中心",
+      "title": "MOM 项目经理",
+      "email": "wang@grinm.com",
+      "password": "wang123",
+      "phone": "",
+      "projectIds": [
+        "proj_mom"
+      ],
+      "avatarColor": "#3b82f6",
+      "createdAt": "2026-08-12T20:53:55.409709Z",
+      "updatedAt": "2026-08-12T20:53:55.409709Z"
+    },
+    {
+      "id": "mem_3",
+      "name": "吴工",
+      "role": "pm",
+      "department": "信息化中心",
+      "title": "ERP 项目经理",
+      "email": "wu@grinm.com",
+      "password": "wu123",
+      "phone": "",
+      "projectIds": [
+        "proj_erp"
+      ],
+      "avatarColor": "#14b8a6",
+      "createdAt": "2026-08-12T20:53:55.409709Z",
+      "updatedAt": "2026-08-12T20:53:55.409709Z"
+    }
+  ],
+  "todos": [
+    {
+      "id": "todo_1",
+      "title": "测试待办",
+      "completed": false,
+      "dueDate": "2026-08-12"
+    }
+  ],
+  "notifications": [],
+  "projects": [],
+  "tasks": []
+}

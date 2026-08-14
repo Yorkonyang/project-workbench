@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Workbench - 数据库升级测试</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { color: #1a1a2e; margin-bottom: 20px; }
+        .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .card h2 { color: #333; margin-bottom: 15px; font-size: 18px; }
+        .status { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 14px; font-weight: 500; }
+        .status.ok { background: #d1fae5; color: #065f46; }
+        .status.error { background: #fee2e2; color: #991b1b; }
+        .status.pending { background: #fef3c7; color: #92400e; }
+        .btn { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; margin-right: 10px; }
+        .btn:hover { background: #2563eb; }
+        .btn.secondary { background: #6b7280; }
+        .btn.secondary:hover { background: #4b5563; }
+        pre { background: #f8fafc; padding: 15px; border-radius: 6px; overflow-x: auto; font-size: 13px; }
+        .info-box { background: #eff6ff; border-left: 4px solid #3b82f6; padding: 15px; margin: 15px 0; border-radius: 0 6px 6px 0; }
+        .success-box { background: #f0fdf4; border-left: 4px solid #22c55e; padding: 15px; margin: 15px 0; border-radius: 0 6px 6px 0; }
+        .error-box { background: #fef2f2; border-left: 4px solid #ef4444; padding: 15px; margin: 15px 0; border-radius: 0 6px 6px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Project Workbench 数据库存储升级</h1>
+        
+        <div class="card">
+            <h2>后端服务状态</h2>
+            <div id="apiStatus" class="status pending">检查中...</div>
+            <p style="margin-top: 15px; color: #666;">API 地址: <code>http://localhost:3000/api</code></p>
+        </div>
+
+        <div class="card">
+            <h2>快速开始</h2>
+            <div class="info-box">
+                <strong>1. 启动后端服务器</strong>
+                <pre>cd server
+npm install
+node scripts/init-db.js
+npm start</pre>
+            </div>
+            <div class="info-box">
+                <strong>2. 前端连接配置</strong>
+                <pre># 在项目根目录创建 .env 文件
+echo "VITE_API_URL=http://localhost:3000/api" > .env</pre>
+            </div>
+            <div class="success-box">
+                <strong>3. 启动前端开发服务器</strong>
+                <pre>npm run dev</pre>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>数据库表结构</h2>
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background: #f8fafc;">
+                        <th style="padding: 10px; text-align: left; border-bottom: 2px solid #e2e8f0;">表名</th>
+                        <th style="padding: 10px; text-align: left; border-bottom: 2px solid #e2e8f0;">说明</th>
+                        <th style="padding: 10px; text-align: left; border-bottom: 2px solid #e2e8f0;">记录数</th>
+                    </tr>
+                </thead>
+                <tbody id="tableStats">
+                    <tr><td colspan="3" style="padding: 20px; text-align: center; color: #666;">请先启动后端服务查看统计</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>API 测试</h2>
+            <button class="btn" onclick="testApi('/health')">健康检查</button>
+            <button class="btn secondary" onclick="testApi('/projects')">获取项目</button>
+            <button class="btn secondary" onclick="testApi('/todos')">获取待办</button>
+            <div id="apiResult" style="margin-top: 15px;"></div>
+        </div>
+
+        <div class="card">
+            <h2>数据迁移指南</h2>
+            <div class="info-box">
+                <strong>从 localStorage 迁移到 SQLite</strong>
+                <ol style="margin-left: 20px; margin-top: 10px;">
+                    <li>在浏览器控制台运行 <code>exportAllData()</code> 导出数据</li>
+                    <li>将导出的 JSON 文件放入 <code>server/migration-data/</code> 目录</li>
+                    <li>重命名文件为表名: <code>projects.json</code>, <code>tasks.json</code> 等</li>
+                    <li>运行迁移脚本: <code>node scripts/migrate.js</code></li>
+                </ol>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>技术架构</h2>
+            <pre>┌─────────────────────────────────────────────────────────────┐
+│                     Frontend (React)                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
+│  │ Zustand     │  │ Storage     │  │ ApiClient           │ │
+│  │ Stores      │──│ Adapter     │──│ (REST API)          │ │
+│  └─────────────┘  └─────────────┘  └──────────┬──────────┘ │
+└────────────────────────────────────────────────┼─────────────┘
+                                                  │ HTTP/REST
+┌────────────────────────────────────────────────┼─────────────┐
+│              Backend (Node.js + Express)       │             │
+│  ┌─────────────┐  ┌─────────────┐  ┌──────────┴──────────┐ │
+│  │ Routes      │  │ Middleware  │  │ Database Layer      │ │
+│  │ /projects   │  │ CORS        │  │ better-sqlite3      │ │
+│  │ /tasks      │  │ Auth        │  └──────────┬──────────┘ │
+│  │ /todos      │  └─────────────┘             │             │
+│  └─────────────┘                             │             │
+└───────────────────────────────────────────────┼─────────────┘
+                                                │
+┌───────────────────────────────────────────────┴─────────────┐
+│                    SQLite Database                          │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
+│  │projects  │  │ tasks    │  │ todos    │  │members   │   │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                 │
+│  │documents│  │notifications│             │                 │
+│  └──────────┘  └──────────┘                 │                 │
+└─────────────────────────────────────────────────────────────┘</pre>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3000/api';
+        
+        async function testApi(endpoint) {
+            const resultDiv = document.getElementById('apiResult');
+            resultDiv.innerHTML = '<p>请求中...</p>';
+            
+            try {
+                const response = await fetch(API_BASE + endpoint);
+                const data = await response.json();
+                
+                if (endpoint === '/health') {
+                    resultDiv.innerHTML = `
+                        <div class="success-box">
+                            <strong>✅ 服务器健康</strong>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>`;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="success-box">
+                            <strong>✅ ${endpoint} 数据</strong>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error-box">
+                        <strong>❌ 请求失败</strong>
+                        <p>${error.message}</p>
+                        <p>请确保后端服务器已启动: <code>cd server && npm start</code></p>
+                    </div>`;
+            }
+        }
+
+        async function checkStatus() {
+            const statusEl = document.getElementById('apiStatus');
+            try {
+                const response = await fetch(API_BASE + '/health');
+                const data = await response.json();
+                
+                statusEl.className = 'status ok';
+                statusEl.textContent = '✅ 后端服务运行中';
+                
+                // Update table stats
+                updateTableStats();
+            } catch (error) {
+                statusEl.className = 'status error';
+                statusEl.textContent = '❌ 后端服务未启动';
+                document.getElementById('tableStats').innerHTML = 
+                    '<tr><td colspan="3" style="padding: 20px; text-align: center; color: #ef4444;">请先启动后端服务器</td></tr>';
+            }
+        }
+
+        async function updateTableStats() {
+            const tables = ['projects', 'tasks', 'todos', 'members', 'documents', 'notifications'];
+            let html = '';
+            
+            for (const table of tables) {
+                try {
+                    const count = await fetchCount(table);
+                    html += `<tr>
+                        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${table}</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${getTableDesc(table)}</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-weight: 500;">${count}</td>
+                    </tr>`;
+                } catch (e) {
+                    html += `<tr>
+                        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${table}</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${getTableDesc(table)}</td>
+                        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #999;">-</td>
+                    </tr>`;
+                }
+            }
+            
+            document.getElementById('tableStats').innerHTML = html;
+        }
+
+        async function fetchCount(table) {
+            const response = await fetch(`${API_BASE}/${table}`);
+            const data = await response.json();
+            return Array.isArray(data) ? data.length : 0;
+        }
+
+        function getTableDesc(table) {
+            const descs = {
+                projects: '项目管理',
+                tasks: '任务管理',
+                todos: '待办事项',
+                members: '成员管理',
+                documents: '文档管理',
+                notifications: '通知消息'
+            };
+            return descs[table] || table;
+        }
+
+        // Check status on load
+        checkStatus();
+        
+        // Refresh every 30 seconds
+        setInterval(checkStatus, 30000);
+    </script>
+</body>
+</html>

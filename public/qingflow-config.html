@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>轻流集成配置</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; padding: 20px; }
+        .container { max-width: 700px; margin: 0 auto; }
+        h1 { color: #1e293b; margin-bottom: 20px; }
+        .card { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #e2e8f0; }
+        .card h2 { color: #334155; margin-bottom: 15px; font-size: 18px; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; color: #64748b; font-size: 14px; margin-bottom: 5px; }
+        .form-group input { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; }
+        .btn { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; margin-right: 10px; }
+        .btn:hover { background: #2563eb; }
+        .btn-success { background: #10b981; }
+        .btn-success:hover { background: #059669; }
+        .status { padding: 12px; border-radius: 6px; margin-top: 15px; font-size: 14px; }
+        .status.ok { background: #dcfce7; color: #166534; }
+        .status.error { background: #fee2e2; color: #991b1b; }
+        .info { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 12px; margin-bottom: 15px; font-size: 13px; color: #1e40af; }
+        code { background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-family: monospace; }
+        .field-map { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; margin-top: 10px; }
+        .field-map h4 { color: #475569; font-size: 13px; margin-bottom: 8px; }
+        .field-map table { width: 100%; font-size: 13px; }
+        .field-map th { text-align: left; color: #64748b; padding: 4px 8px; border-bottom: 1px solid #e2e8f0; }
+        .field-map td { padding: 4px 8px; border-bottom: 1px solid #f1f5f9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔗 轻流 Q-Source 集成配置</h1>
+
+        <div class="info">
+            <strong>💡 配置说明：</strong><br>
+            <strong>API基础地址</strong>：轻流专有版域名<br>
+            &nbsp;&nbsp;例：<code>https://gkbpm.grinm.com:56555</code><br>
+            <br>
+            <strong>Q-Source ID</strong>：从你的 Q-Source 被动数据源 URL 中提取<br>
+            &nbsp;&nbsp;URL：<code>https://gkbpm.grinm.com:56555/api/qsource/{ID}</code><br>
+            &nbsp;&nbsp;提取 <code>{ID}</code> 填入下方
+        </div>
+
+        <div class="card">
+            <h2>⚙️ 轻流配置</h2>
+            <div class="form-group">
+                <label>API基础地址</label>
+                <input type="text" id="baseUrl" placeholder="https://gkbpm.grinm.com:56555" value="">
+            </div>
+            <div class="form-group">
+                <label>Q-Source ID（UUID）</label>
+                <input type="text" id="qsourceId" placeholder="3b3d042e-c032-46fe-994f-19cee0c36474">
+            </div>
+            <button class="btn btn-success" onclick="saveConfig()">💾 保存配置</button>
+            <button class="btn" onclick="testConnection()">🔍 测试连接</button>
+            <div id="configStatus"></div>
+        </div>
+
+        <div class="card">
+            <h2>📋 字段映射</h2>
+            <div class="field-map">
+                <h4>前端字段 → 轻流字段</h4>
+                <table>
+                    <tr><th>前端字段</th><th>轻流字段</th><th>说明</th></tr>
+                    <tr><td>bt</td><td>任务标题</td><td>任务/待办标题</td></tr>
+                    <tr><td>ms</td><td>任务描述</td><td>任务/待办描述</td></tr>
+                    <tr><td>zrr</td><td>责任人</td><td>责任人邮箱地址</td></tr>
+                    <tr><td>yxj</td><td>优先级</td><td>high/medium/low</td></tr>
+                    <tr><td>jzrq</td><td>截止日期</td><td>YYYY-MM-DD</td></tr>
+                    <tr><td>ssxm</td><td>所属项目</td><td>项目名称</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📝 测试推送任务</h2>
+            <div class="form-group">
+                <label>责任人邮箱</label>
+                <input type="email" id="assigneeEmail" placeholder="如：cio@grinm.com" value="cio@grinm.com">
+            </div>
+            <div class="form-group">
+                <label>任务标题</label>
+                <input type="text" id="taskTitle" value="这是一个测试任务">
+            </div>
+            <button class="btn" onclick="sendTestTask()">📤 发送任务通知</button>
+            <div id="taskStatus"></div>
+        </div>
+
+        <div class="card">
+            <h2>📋 测试推送待办</h2>
+            <div class="form-group">
+                <label>责任人邮箱</label>
+                <input type="email" id="todoEmail" placeholder="如：cio@grinm.com" value="cio@grinm.com">
+            </div>
+            <div class="form-group">
+                <label>待办标题</label>
+                <input type="text" id="todoTitle" value="这是一个测试待办">
+            </div>
+            <button class="btn" onclick="sendTestTodo()">📤 发送待办通知</button>
+            <div id="todoStatus"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3000/api';
+        let config = {};
+
+        async function loadConfig() {
+            try {
+                const res = await fetch(`${API_BASE}/qingflow/config`);
+                config = await res.json();
+                document.getElementById('baseUrl').value = config.baseUrl || '';
+                document.getElementById('qsourceId').value = config.qsourceId || '';
+            } catch (err) {
+                console.error('Failed to load config:', err);
+            }
+        }
+
+        async function saveConfig() {
+            const newConfig = {
+                baseUrl: document.getElementById('baseUrl').value.trim(),
+                qsourceId: document.getElementById('qsourceId').value.trim()
+            };
+
+            try {
+                const res = await fetch(`${API_BASE}/qingflow/config`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(newConfig)
+                });
+                const result = await res.json();
+                showStatus('configStatus', '✅ 配置已保存', 'ok');
+                config = newConfig;
+            } catch (err) {
+                showStatus('configStatus', '❌ 保存失败: ' + err.message, 'error');
+            }
+        }
+
+        async function testConnection() {
+            if (!config.qsourceId) {
+                showStatus('configStatus', '❌ 请先填写 Q-Source ID', 'error');
+                return;
+            }
+
+            showStatus('configStatus', '正在测试...', 'ok');
+
+            try {
+                const res = await fetch(`${API_BASE}/qingflow/test`);
+                const result = await res.json();
+
+                if (result.success) {
+                    showStatus('configStatus', '✅ 连接成功！测试消息已发送至轻流', 'ok');
+                } else {
+                    showStatus('configStatus', '❌ 连接失败: ' + (result.error || result.errMsg || '未知错误'), 'error');
+                }
+            } catch (err) {
+                showStatus('configStatus', '❌ 网络错误: ' + err.message, 'error');
+            }
+        }
+
+        async function sendTestTask() {
+            if (!config.qsourceId) {
+                showStatus('taskStatus', '❌ 请先配置 Q-Source ID', 'error');
+                return;
+            }
+
+            const email = document.getElementById('assigneeEmail').value;
+            const title = document.getElementById('taskTitle').value;
+
+            showStatus('taskStatus', '正在发送任务通知...', 'ok');
+
+            try {
+                const res = await fetch(`${API_BASE}/projects/test-project/tasks`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: title,
+                        description: '这是一条测试任务通知',
+                        assignee: email,
+                        priority: 'high',
+                        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+                    })
+                });
+                const result = await res.json();
+                showStatus('taskStatus', '✅ 任务已创建，通知已发送至轻流', 'ok');
+            } catch (err) {
+                showStatus('taskStatus', '❌ 发送失败: ' + err.message, 'error');
+            }
+        }
+
+        async function sendTestTodo() {
+            if (!config.qsourceId) {
+                showStatus('todoStatus', '❌ 请先配置 Q-Source ID', 'error');
+                return;
+            }
+
+            const email = document.getElementById('todoEmail').value;
+            const title = document.getElementById('todoTitle').value;
+
+            showStatus('todoStatus', '正在发送待办通知...', 'ok');
+
+            try {
+                const res = await fetch(`${API_BASE}/todos`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: title,
+                        description: '这是一条测试待办通知',
+                        assignee: email,
+                        priority: 'high',
+                        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+                    })
+                });
+                const result = await res.json();
+                showStatus('todoStatus', '✅ 待办已创建，通知已发送至轻流', 'ok');
+            } catch (err) {
+                showStatus('todoStatus', '❌ 发送失败: ' + err.message, 'error');
+            }
+        }
+
+        function showStatus(elementId, message, type) {
+            const el = document.getElementById(elementId);
+            el.className = `status ${type}`;
+            el.textContent = message;
+        }
+
+        loadConfig();
+    </script>
+</body>
+</html>

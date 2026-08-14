@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>轻流API调试</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { color: #1e293b; margin-bottom: 20px; }
+        .card { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #e2e8f0; }
+        .card h2 { color: #334155; margin-bottom: 15px; font-size: 18px; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; color: #64748b; font-size: 14px; margin-bottom: 5px; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; font-family: monospace; }
+        .btn { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; margin-right: 10px; margin-bottom: 10px; }
+        .btn:hover { background: #2563eb; }
+        .btn-success { background: #10b981; }
+        .btn-success:hover { background: #059669; }
+        .btn-danger { background: #ef4444; }
+        .status { padding: 12px; border-radius: 6px; margin-top: 15px; font-size: 14px; word-break: break-all; }
+        .status.ok { background: #dcfce7; color: #166534; }
+        .status.error { background: #fee2e2; color: #991b1b; }
+        .status.info { background: #eff6ff; color: #1e40af; }
+        pre { background: #f1f5f9; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; margin-top: 10px; }
+        .hint { background: #fef3c7; border: 1px solid #fde68a; border-radius: 6px; padding: 12px; margin-bottom: 15px; font-size: 13px; color: #92400e; }
+        .step { padding: 10px; margin: 5px 0; background: #f8fafc; border-radius: 4px; font-size: 13px; }
+        .step.active { background: #dbeafe; border-left: 3px solid #3b82f6; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 轻流API调试工具</h1>
+
+        <div class="hint">
+            <strong>⚠️ 重要提示：</strong><br>
+            1. <strong>API基础地址</strong>应该填写：
+            <ul style="margin:10px 0 0 20px;">
+                <li>公有云: <code>https://api.qingflow.com</code></li>
+                <li>专有版: <code>https://gkbpm.grinm.com:56555</code>（<strong>只填域名，不要加 /openApi 路径</strong>）</li>
+            </ul>
+            <br>
+            2. 系统会自动添加 <code>/openApi</code> 前缀（专有版）和 <code>/app/{appKey}/data</code> 路径
+        </div>
+
+        <!-- 配置区域 -->
+        <div class="card">
+            <h2>📋 轻流配置</h2>
+            <div class="form-group">
+                <label>API基础地址</label>
+                <input type="text" id="baseUrl" placeholder="https://gkbpm.grinm.com:56555" value="">
+            </div>
+            <div class="form-group">
+                <label>Access Token</label>
+                <input type="password" id="accessToken" placeholder="输入轻流 accessToken">
+            </div>
+            <div class="form-group">
+                <label>App Key</label>
+                <input type="text" id="appKey" placeholder="输入应用 appKey">
+            </div>
+            <button class="btn btn-success" onclick="saveConfig()">💾 保存配置</button>
+            <button class="btn" onclick="testConnection()">🔍 测试连接</button>
+            <div id="configStatus"></div>
+        </div>
+
+        <!-- 测试表单数据 -->
+        <div class="card">
+            <h2>📝 测试表单数据</h2>
+            <div class="form-group">
+                <label>表单字段配置（JSON格式）</label>
+                <textarea id="formData" rows="8" placeholder='[
+  {"queId": 1, "queTitle": "任务标题", "queType": 1, "values": [{"value": "测试任务"}]},
+  {"queId": 2, "queTitle": "责任人", "queType": 1, "values": [{"value": "张三"}]}
+]'></textarea>
+            </div>
+            <div class="hint" style="margin-top:10px;">
+                💡 <strong>如何获取 queId？</strong><br>
+                1. 打开轻流表单，按F12打开开发者工具<br>
+                2. 切换到 Network 标签<br>
+                3. 点击某条数据记录<br>
+                4. 在 Response 中查找字段的 queId
+            </div>
+            <button class="btn" onclick="testFormData()">📤 测试提交数据</button>
+            <div id="formStatus"></div>
+        </div>
+
+        <!-- 请求详情 -->
+        <div class="card">
+            <h2>🔎 请求详情</h2>
+            <div class="step" id="step1">1. 检查配置...</div>
+            <div class="step" id="step2">2. 构造请求URL...</div>
+            <div class="step" id="step3">3. 发送HTTP请求...</div>
+            <div class="step" id="step4">4. 处理响应...</div>
+            <pre id="requestDetail">点击"测试连接"查看请求详情</pre>
+        </div>
+
+        <!-- 历史记录 -->
+        <div class="card">
+            <h2>📋 测试历史</h2>
+            <div id="historyList"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3000/api';
+        let config = { baseUrl: '', accessToken: '', appKey: '' };
+        let history = [];
+
+        // 加载配置
+        async function loadConfig() {
+            try {
+                const res = await fetch(`${API_BASE}/qingflow/config`);
+                config = await res.json();
+                document.getElementById('baseUrl').value = config.baseUrl || '';
+                document.getElementById('accessToken').value = config.accessToken || '';
+                document.getElementById('appKey').value = config.appKey || '';
+            } catch (err) {
+                console.error('Failed to load config:', err);
+            }
+        }
+
+        // 保存配置
+        async function saveConfig() {
+            const newConfig = {
+                baseUrl: document.getElementById('baseUrl').value.trim(),
+                accessToken: document.getElementById('accessToken').value.trim(),
+                appKey: document.getElementById('appKey').value.trim()
+            };
+
+            try {
+                const res = await fetch(`${API_BASE}/qingflow/config`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(newConfig)
+                });
+                const result = await res.json();
+                showStatus('configStatus', '✅ 配置已保存', 'ok');
+                config = newConfig;
+                addToHistory('配置', '保存成功', 'success');
+            } catch (err) {
+                showStatus('configStatus', '❌ 保存失败: ' + err.message, 'error');
+            }
+        }
+
+        // 测试连接
+        async function testConnection() {
+            showSteps('checking');
+
+            if (!config.accessToken || !config.appKey) {
+                showStatus('configStatus', '❌ 请先填写 Access Token 和 App Key', 'error');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/qingflow/test`);
+                const result = await res.json();
+
+                if (result.success) {
+                    showStatus('configStatus', '✅ 连接成功！', 'ok');
+                    showSteps('success');
+                    updateRequestDetail('GET /health', JSON.stringify(result, null, 2));
+                    addToHistory('连接', '测试成功', 'success');
+                } else {
+                    showStatus('configStatus', '❌ 连接失败: ' + (result.error || result.errMsg || '未知错误'), 'error');
+                    showSteps('error');
+                    updateRequestDetail('GET /health', JSON.stringify(result, null, 2));
+                    addToHistory('连接', '测试失败', 'failed');
+                }
+            } catch (err) {
+                showStatus('configStatus', '❌ 网络错误: ' + err.message, 'error');
+                showSteps('error');
+                updateRequestDetail('GET /health', 'Network Error: ' + err.message);
+                addToHistory('连接', '网络错误', 'failed');
+            }
+        }
+
+        // 测试表单数据
+        async function testFormData() {
+            showSteps('checking');
+
+            if (!config.accessToken || !config.appKey) {
+                showStatus('formStatus', '❌ 请先保存配置', 'error');
+                return;
+            }
+
+            let answers;
+            try {
+                answers = JSON.parse(document.getElementById('formData').value);
+            } catch (err) {
+                showStatus('formStatus', '❌ JSON格式错误: ' + err.message, 'error');
+                return;
+            }
+
+            const payload = { answers: answers };
+
+            try {
+                const res = await fetch(`${API_BASE}/qingflow/form-data`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await res.json();
+
+                if (result.errCode === 0 || result.applyId) {
+                    showStatus('formStatus', '✅ 数据提交成功！Apply ID: ' + result.applyId, 'ok');
+                    showSteps('success');
+                    updateRequestDetail('POST /app/:appKey/data', JSON.stringify(result, null, 2));
+                    addToHistory('表单数据', '提交成功', 'success');
+                } else {
+                    showStatus('formStatus', '❌ 提交失败: ' + (result.errMsg || '未知错误'), 'error');
+                    showSteps('error');
+                    updateRequestDetail('POST /app/:appKey/data', JSON.stringify(result, null, 2));
+                    addToHistory('表单数据', '提交失败', 'failed');
+                }
+            } catch (err) {
+                showStatus('formStatus', '❌ 网络错误: ' + err.message, 'error');
+                showSteps('error');
+                updateRequestDetail('POST /app/:appKey/data', 'Network Error: ' + err.message);
+                addToHistory('表单数据', '网络错误', 'failed');
+            }
+        }
+
+        // 显示状态
+        function showStatus(elementId, message, type) {
+            const el = document.getElementById(elementId);
+            el.className = `status ${type}`;
+            el.textContent = message;
+        }
+
+        // 显示步骤状态
+        function showSteps(step) {
+            const steps = ['step1', 'step2', 'step3', 'step4'];
+            steps.forEach((id, idx) => {
+                const el = document.getElementById(id);
+                el.className = 'step';
+                if (step === 'checking' && idx === 0) el.classList.add('active');
+                if (step === 'success' && idx <= 3) el.classList.add('active');
+                if (step === 'error') {
+                    if (idx === 0) el.classList.add('active');
+                }
+            });
+        }
+
+        // 更新请求详情
+        function updateRequestDetail(request, response) {
+            const detail = document.getElementById('requestDetail');
+            detail.textContent = `📤 请求:\n${request}\n\n📥 响应:\n${response}`;
+        }
+
+        // 添加到历史
+        function addToHistory(type, result, status) {
+            const now = new Date().toLocaleString('zh-CN');
+            history.unshift({ type, result, status, time: now });
+
+            const list = document.getElementById('historyList');
+            list.innerHTML = history.slice(0, 10).map(item => `
+                <div style="padding:10px;margin:5px 0;background:#f8fafc;border-radius:4px;font-size:13px;">
+                    <span style="color:#64748b;">${item.time}</span>
+                    <strong>${item.type}</strong>: ${item.result}
+                    <span style="float:right;color:${item.status === 'success' ? '#10b981' : '#ef4444'};">
+                        ${item.status === 'success' ? '✅' : '❌'}
+                    </span>
+                </div>
+            `).join('');
+        }
+
+        // 初始化
+        loadConfig();
+    </script>
+</body>
+</html>
