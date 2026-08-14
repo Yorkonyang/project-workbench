@@ -42,7 +42,7 @@ const SEED_DATA = {
       role: 'admin',
       department: '信息化中心',
       title: '信息化总监',
-      email: 'cio@grinm.com',
+      email: 'cio@example.com',
       password: 'admin123',
       phone: '',
       projectIds: ['proj_mom', 'proj_erp'],
@@ -56,7 +56,7 @@ const SEED_DATA = {
       role: 'pm',
       department: '信息化中心',
       title: 'MOM 项目经理',
-      email: 'wang@grinm.com',
+      email: 'wang@example.com',
       password: 'wang123',
       phone: '',
       projectIds: ['proj_mom'],
@@ -70,7 +70,7 @@ const SEED_DATA = {
       role: 'pm',
       department: '信息化中心',
       title: 'ERP 项目经理',
-      email: 'wu@grinm.com',
+      email: 'wu@example.com',
       password: 'wu123',
       phone: '',
       projectIds: ['proj_erp'],
@@ -84,7 +84,7 @@ const SEED_DATA = {
       role: 'member',
       department: '开发部',
       title: '后端开发工程师',
-      email: 'li@grinm.com',
+      email: 'li@example.com',
       password: 'li123',
       phone: '',
       projectIds: ['proj_mom'],
@@ -98,7 +98,7 @@ const SEED_DATA = {
       role: 'member',
       department: '开发部',
       title: '系统设计工程师',
-      email: 'zhang@grinm.com',
+      email: 'zhang@example.com',
       password: 'zhang123',
       phone: '',
       projectIds: ['proj_mom'],
@@ -112,7 +112,7 @@ const SEED_DATA = {
       role: 'member',
       department: '财务部',
       title: '成本核算专员',
-      email: 'zheng@grinm.com',
+      email: 'zheng@example.com',
       password: 'zheng123',
       phone: '',
       projectIds: ['proj_erp'],
@@ -126,7 +126,7 @@ const SEED_DATA = {
       role: 'member',
       department: '开发部',
       title: '前端开发工程师',
-      email: 'zhao@grinm.com',
+      email: 'zhao@example.com',
       password: 'zhao123',
       phone: '',
       projectIds: ['proj_mom', 'proj_erp'],
@@ -140,7 +140,7 @@ const SEED_DATA = {
       role: 'viewer',
       department: '生产部',
       title: '关键用户',
-      email: 'sun@grinm.com',
+      email: 'sun@example.com',
       password: 'sun123',
       phone: '',
       projectIds: ['proj_mom'],
@@ -248,5 +248,5 @@ console.log('  - Projects:', db.projects.length);
 console.log('  - Todos:', db.todos.length);
 console.log('  - Notifications:', db.notifications.length);
 console.log('\n🔐 Default login credentials:');
-console.log('  Email: cio@grinm.com');
+console.log('  Email: cio@example.com');
 console.log('  Password: admin123');

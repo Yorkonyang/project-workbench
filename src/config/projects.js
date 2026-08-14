@@ -4,7 +4,7 @@ export const PROJECTS = {
     id: 'proj_mom',
     code: 'MOM',
     name: 'MOM 系统建设',
-    description: '有研亿金生产制造管理（MOM）系统建设，涵盖生产计划、过程管控、质量管理、设备管理等模块',
+    description: '生产制造管理（MOM）系统建设，涵盖生产计划、过程管控、质量管理、设备管理等模块',
     startDate: '2026-01-01',
     endDate: '2026-12-31',
     progress: 35,

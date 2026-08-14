@@ -315,7 +315,7 @@ export default function ReminderSettingsPage() {
               <Input
                 value={bpmConfig.baseUrl}
                 onChange={(e) => setBpmConfig(f => ({ ...f, baseUrl: e.target.value }))}
-                placeholder="https://gkbpm.grinm.com:56555"
+                placeholder="https://your-company.qingflow.com"
               />
             </div>
 

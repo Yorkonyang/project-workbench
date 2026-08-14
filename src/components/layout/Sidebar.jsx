@@ -191,7 +191,7 @@ export default function Sidebar({ isOpen, onClose }) {
         {!collapsed && (
           <div className="p-4 border-t border-white/10">
             <div className="text-[10px] text-slate-500 text-center">
-              有研亿金 · 信息化中心
+              项目工作台 · v2.0
             </div>
           </div>
         )}

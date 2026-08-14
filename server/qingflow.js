@@ -7,10 +7,10 @@ const https = require('https');
 const http = require('http');
 const db = require('./db');
 
-// 轻流 Q-Source 配置（默认值，可通过 API 覆盖）
+// 轻流 Q-Source 配置（默认值，请通过 API 或界面配置后生效）
 let qingflowConfig = {
-    baseUrl: 'https://gkbpm.grinm.com:56555',
-    qsourceId: '3b3d042e-c032-46fe-994f-19cee0c36474',  // Q-Source 接口 UUID
+    baseUrl: '',  // 填写轻流服务器地址，如 https://your-company.qingflow.com
+    qsourceId: '',  // 在轻流后台「数据源 → Q-Source」中获取 UUID
 };
 
 /**
@@ -182,7 +182,7 @@ async function testConnection() {
     const testPayload = {
         bt: '[系统测试] 项目工作台集成验证',
         ms: '这是一条测试消息，用于验证 Q-Source 接口是否正常连接。',
-        zrr: 'cio@grinm.com',  // 使用测试邮箱
+        zrr: 'user@example.com',  // 使用测试邮箱
         yxj: 'low',
         jzrq: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         ssxm: '项目工作台',

@@ -80,7 +80,7 @@ export default function LoginPage() {
 
         <div className="absolute bottom-8 left-12 right-12">
           <div className="text-xs text-slate-500">
-            有研亿金新材料有限公司 · 信息化中心
+            项目工作台 · 信息化管理
           </div>
         </div>
       </div>
@@ -95,7 +95,7 @@ export default function LoginPage() {
             </div>
             <div>
               <h1 className="text-lg font-bold text-slate-800">项目工作台</h1>
-              <p className="text-xs text-slate-400">有研亿金 · 信息化管理</p>
+              <p className="text-xs text-slate-400">Project Workbench</p>
             </div>
           </div>
 
@@ -121,7 +121,7 @@ export default function LoginPage() {
                     onChange={(e) => { setEmail(e.target.value); clearError(); }}
                     required
                     className="w-full pl-10 pr-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-smooth"
-                    placeholder="name@grinm.com"
+                    placeholder="name@company.com"
                     autoComplete="email"
                   />
                 </div>
@@ -168,7 +168,7 @@ export default function LoginPage() {
           </div>
 
           <p className="text-center text-xs text-slate-400 mt-6">
-            有研亿金新材料有限公司 · 信息化中心 © 2026
+            项目工作台 © 2026
           </p>
         </div>
       </div>

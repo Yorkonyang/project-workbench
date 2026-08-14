@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -37,10 +37,10 @@
         <div class="info">
             <strong>💡 配置说明：</strong><br>
             <strong>API基础地址</strong>：轻流专有版域名<br>
-            &nbsp;&nbsp;例：<code>https://gkbpm.grinm.com:56555</code><br>
+            &nbsp;&nbsp;例：<code>https://your-company.qingflow.com</code><br>
             <br>
             <strong>Q-Source ID</strong>：从你的 Q-Source 被动数据源 URL 中提取<br>
-            &nbsp;&nbsp;URL：<code>https://gkbpm.grinm.com:56555/api/qsource/{ID}</code><br>
+            &nbsp;&nbsp;URL：<code>https://your-company.qingflow.com/api/qsource/{ID}</code><br>
             &nbsp;&nbsp;提取 <code>{ID}</code> 填入下方
         </div>
 
@@ -48,11 +48,11 @@
             <h2>⚙️ 轻流配置</h2>
             <div class="form-group">
                 <label>API基础地址</label>
-                <input type="text" id="baseUrl" placeholder="https://gkbpm.grinm.com:56555" value="">
+                <input type="text" id="baseUrl" placeholder="https://your-company.qingflow.com" value="">
             </div>
             <div class="form-group">
                 <label>Q-Source ID（UUID）</label>
-                <input type="text" id="qsourceId" placeholder="3b3d042e-c032-46fe-994f-19cee0c36474">
+                <input type="text" id="qsourceId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
             </div>
             <button class="btn btn-success" onclick="saveConfig()">💾 保存配置</button>
             <button class="btn" onclick="testConnection()">🔍 测试连接</button>
@@ -79,7 +79,7 @@
             <h2>📝 测试推送任务</h2>
             <div class="form-group">
                 <label>责任人邮箱</label>
-                <input type="email" id="assigneeEmail" placeholder="如：cio@grinm.com" value="cio@grinm.com">
+                <input type="email" id="assigneeEmail" placeholder="如：user@example.com" value="user@example.com">
             </div>
             <div class="form-group">
                 <label>任务标题</label>
@@ -93,7 +93,7 @@
             <h2>📋 测试推送待办</h2>
             <div class="form-group">
                 <label>责任人邮箱</label>
-                <input type="email" id="todoEmail" placeholder="如：cio@grinm.com" value="cio@grinm.com">
+                <input type="email" id="todoEmail" placeholder="如：user@example.com" value="user@example.com">
             </div>
             <div class="form-group">
                 <label>待办标题</label>
