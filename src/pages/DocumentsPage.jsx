@@ -8,11 +8,15 @@ import DocumentGrid from '@/components/documents/DocumentGrid';
 import DocumentForm from '@/components/documents/DocumentForm';
 import { useDocumentStore } from '@/store/useDocumentStore';
 import { useProjectStore } from '@/store/useProjectStore';
+import { useTaskStore } from '@/store/useTaskStore';
+import { useAccess } from '@/hooks/useAccess';
 
 export default function DocumentsPage() {
   const documents = useDocumentStore((s) => s.documents);
   const deleteDocument = useDocumentStore((s) => s.deleteDocument);
   const projects = useProjectStore((s) => s.projects);
+  const tasks = useTaskStore((s) => s.tasks);
+  const { isAdmin, canManageProject, currentUserId } = useAccess();
 
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -24,6 +28,18 @@ export default function DocumentsPage() {
   const activeProjects = projects.filter((p) => !p.archived);
   // 只筛选活跃项目的文档
   const activeProjectIds = new Set(activeProjects.map((p) => p.id));
+
+  // 可添加文档的项目：管理员全部；成员仅自己可管理的项目 或 自己被分配任务的项目
+  const taskAssignedToMe = (t) =>
+    Array.isArray(t.assignees) ? t.assignees.includes(currentUserId) : t.assignee === currentUserId;
+  const allowedDocProjects = isAdmin
+    ? activeProjects
+    : activeProjects.filter(
+        (p) =>
+          canManageProject(p) ||
+          tasks.some((t) => (t.projectId || t.project_id) === p.id && taskAssignedToMe(t))
+      );
+  const canCreateDoc = isAdmin || allowedDocProjects.length > 0;
 
   const categories = [...new Set(documents.map((d) => d.category).filter(Boolean))];
 
@@ -74,10 +90,12 @@ export default function DocumentsPage() {
             <Download className="w-4 h-4" />
             导出
           </Button>
-          <Button size="sm" onClick={() => { setEditingDoc(null); setShowForm(true); }}>
-            <Plus className="w-4 h-4" />
-            添加文档
-          </Button>
+          {canCreateDoc && (
+            <Button size="sm" onClick={() => { setEditingDoc(null); setShowForm(true); }}>
+              <Plus className="w-4 h-4" />
+              添加文档
+            </Button>
+          )}
         </div>
       }
     >
@@ -105,7 +123,7 @@ export default function DocumentsPage() {
           value={categoryFilter}
           onChange={setCategoryFilter}
           options={[
-            { value: '', label: '全部分类' },
+            { value: '', label: '全部项目阶段' },
             ...categories.map((c) => ({ value: c, label: c })),
           ]}
           className="w-32"
@@ -128,7 +146,7 @@ export default function DocumentsPage() {
       {showForm && (
         <DocumentForm
           document={editingDoc}
-          projects={activeProjects}
+          projects={allowedDocProjects}
           onClose={handleCloseForm}
         />
       )}

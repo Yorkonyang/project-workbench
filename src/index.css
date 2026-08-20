@@ -34,6 +34,22 @@
   ::-webkit-scrollbar-thumb:hover {
     background: #94A3B8;
   }
+
+  /* 甘特图底部横向滚动条加宽一倍（5px → 10px），不影响其它滚动条 */
+  .gantt-scroll::-webkit-scrollbar {
+    width: 8px;
+    height: 10px;
+  }
+  .gantt-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .gantt-scroll::-webkit-scrollbar-thumb {
+    background: #94A3B8;
+    border-radius: 9999px;
+  }
+  .gantt-scroll::-webkit-scrollbar-thumb:hover {
+    background: #64748B;
+  }
 }
 
 @layer components {

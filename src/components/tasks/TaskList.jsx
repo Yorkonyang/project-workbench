@@ -3,6 +3,7 @@ import { Edit2, Trash2, TrendingUp } from 'lucide-react';
 import Badge from '@/components/ui/Badge';
 import { useMemberStore } from '@/store/useMemberStore';
 import { useProjectStore } from '@/store/useProjectStore';
+import { useAccess } from '@/hooks/useAccess';
 import {
   getPriorityConfig,
   getTaskStatusConfig,
@@ -17,6 +18,7 @@ export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress
   const members = useMemberStore((s) => s.members);
   const activeProjects = useProjectStore((s) => s.projects.filter((p) => !p.archived));
   const activeProjectIds = new Set(activeProjects.map((p) => p.id));
+  const { canManageTask, canReportTask } = useAccess();
 
   if (tasks.length === 0) {
     return <div className="text-center text-sm text-slate-400 py-8">暂无任务</div>;
@@ -68,10 +70,33 @@ export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress
                     </span>
                   )}
                 </td>
-                <td className="py-2.5 px-3 hidden md:table-cell text-slate-600">
-                  {task.assignee
-                    ? (members.find((m) => m.id === task.assignee)?.name || '-')
-                    : '-'}
+                <td className="py-2.5 px-3 hidden md:table-cell">
+                  {(() => {
+                    const assignees = task.assignees || (task.assignee ? [task.assignee] : []);
+                    if (assignees.length === 0) return <span className="text-slate-400">-</span>;
+                    return (
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {assignees.map((aId) => {
+                          const m = members.find((m) => m.id === aId);
+                          if (!m) return null;
+                          return (
+                            <span
+                              key={aId}
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-primary-50 text-primary-700"
+                            >
+                              <span
+                                className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-white text-[8px] font-bold shrink-0"
+                                style={{ backgroundColor: m.avatarColor }}
+                              >
+                                {m.name.charAt(0)}
+                              </span>
+                              {m.name}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </td>
                 <td className="py-2.5 px-3">
                   <span className={cn('text-xs font-medium', priConfig.textColor)}>{priConfig.label}</span>
@@ -91,25 +116,31 @@ export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress
                     <span className="text-xs text-slate-400">已归档</span>
                   ) : (
                     <div className="flex justify-end gap-1">
-                      <button
-                        onClick={() => onProgress?.(task)}
-                        className="p-1.5 hover:bg-primary-50 rounded text-slate-400 hover:text-primary-600"
-                        title="进度汇报"
-                      >
-                        <TrendingUp className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => onEdit?.(task)}
-                        className="p-1.5 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-600"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => onDelete?.(task)}
-                        className="p-1.5 hover:bg-red-50 rounded text-slate-400 hover:text-red-500"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {canReportTask(task) && (
+                        <button
+                          onClick={() => onProgress?.(task)}
+                          className="p-1.5 hover:bg-primary-50 rounded text-slate-400 hover:text-primary-600"
+                          title="进度汇报"
+                        >
+                          <TrendingUp className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {canManageTask(task) && (
+                        <button
+                          onClick={() => onEdit?.(task)}
+                          className="p-1.5 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-600"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {canManageTask(task) && (
+                        <button
+                          onClick={() => onDelete?.(task)}
+                          className="p-1.5 hover:bg-red-50 rounded text-slate-400 hover:text-red-500"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   )}
                 </td>

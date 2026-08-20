@@ -10,6 +10,7 @@ import MilestoneForm from '@/components/timeline/MilestoneForm';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useMilestoneStore } from '@/store/useMilestoneStore';
 import { useProjectStore } from '@/store/useProjectStore';
+import { useAccess } from '@/hooks/useAccess';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 export default function TimelinePage() {
@@ -21,6 +22,13 @@ export default function TimelinePage() {
   const updateMilestone = useMilestoneStore((s) => s.updateMilestone);
   const deleteMilestone = useMilestoneStore((s) => s.deleteMilestone);
   const projects = useProjectStore((s) => s.projects);
+  const { isAdmin, canManageProject } = useAccess();
+  // 仅管理员或至少拥有一个可管理项目时可新建里程碑（成员后端会 403）
+  const canCreateMilestone = isAdmin || projects.some((p) => canManageProject(p));
+  // 仅向里程碑表单提供可管理的项目，避免成员误选他人项目
+  const manageableProjects = isAdmin
+    ? projects.filter((p) => !p.archived)
+    : projects.filter((p) => !p.archived && canManageProject(p));
 
   // 读取 URL query 参数
   const projectIdFromUrl = searchParams.get('projectId');
@@ -106,10 +114,12 @@ export default function TimelinePage() {
           ]}
           className="w-40"
         />
-        <Button size="sm" onClick={() => { setEditingMilestone(null); setShowForm(true); }}>
-          <Plus className="w-4 h-4" />
-          新建里程碑
-        </Button>
+        {canCreateMilestone && (
+          <Button size="sm" onClick={() => { setEditingMilestone(null); setShowForm(true); }}>
+            <Plus className="w-4 h-4" />
+            新建里程碑
+          </Button>
+        )}
       </div>
 
       <div className="mb-4">
@@ -130,8 +140,9 @@ export default function TimelinePage() {
 
       {showForm && (
         <MilestoneForm
+          key={editingMilestone ? `ms-${editingMilestone.id}` : 'ms-new'}
           milestone={editingMilestone}
-          projects={filteredProjects}
+          projects={manageableProjects}
           onClose={handleCloseForm}
           onSave={handleSave}
         />

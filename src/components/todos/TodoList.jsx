@@ -3,10 +3,12 @@ import { Check, Edit2, Trash2, Calendar, Link2, Bell, User, CheckSquare, Flag } 
 import { useProjectStore } from '@/store/useProjectStore';
 import { useMemberStore } from '@/store/useMemberStore';
 import { getPriorityConfig, dueDateLabel, isOverdue, cn } from '@/lib/utils';
+import { useAccess } from '@/hooks/useAccess';
 
 export default function TodoList({ items, onEditTodo, onDeleteTodo, onToggleTodo, onProgressTask }) {
   const projects = useProjectStore((s) => s.projects);
   const members = useMemberStore((s) => s.members);
+  const { canManageTodo } = useAccess();
   const [confirmTodo, setConfirmTodo] = useState(null);
 
   // 按类型分别排序
@@ -162,7 +164,7 @@ export default function TodoList({ items, onEditTodo, onDeleteTodo, onToggleTodo
               </div>
 
               {/* Actions */}
-              {!todo.completed && (
+              {!todo.completed && canManageTodo(todo) && (
                 <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                   <button
                     onClick={() => onEditTodo?.(todo)}
@@ -201,7 +203,8 @@ export default function TodoList({ items, onEditTodo, onDeleteTodo, onToggleTodo
             blocked: { label: '阻塞', bgClass: 'bg-red-100', textClass: 'text-red-600' },
           }[task.status] || { label: task.status, bgClass: 'bg-slate-100', textClass: 'text-slate-600' };
           const project = task.projectId ? projects.find((p) => p.id === task.projectId) : null;
-          const assigneeMember = members.find((m) => m.id === task.assignee);
+          const assignees = task.assignees || (task.assignee ? [task.assignee] : []);
+          const assigneeMembers = assignees.map((id) => members.find((m) => m.id === id)).filter(Boolean);
           const overdue = task.dueDate && isOverdue(task.dueDate) && task.status !== 'done';
 
           return (
@@ -243,19 +246,22 @@ export default function TodoList({ items, onEditTodo, onDeleteTodo, onToggleTodo
                       {project.code}
                     </span>
                   )}
-                  {task.assignee && (
+                  {assigneeMembers.length > 0 && (
                     <span className="text-xs text-slate-400 flex items-center gap-1">
-                      {assigneeMember ? (
-                        <span
-                          className="w-4 h-4 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                          style={{ backgroundColor: assigneeMember.avatarColor || '#6b7280' }}
-                        >
-                          {task.assignee.charAt(0)}
-                        </span>
-                      ) : (
-                        <User className="w-3 h-3" />
-                      )}
-                      {task.assignee}
+                      <div className="flex -space-x-1">
+                        {assigneeMembers.slice(0, 3).map((m) => (
+                          <span
+                            key={m.id}
+                            className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] font-bold border border-white shrink-0"
+                            style={{ backgroundColor: m.avatarColor || '#6b7280' }}
+                            title={m.name}
+                          >
+                            {m.name.charAt(0)}
+                          </span>
+                        ))}
+                      </div>
+                      {assigneeMembers.map((m) => m.name).join('、')}
+                      {assigneeMembers.length > 3 && ` +${assigneeMembers.length - 3}`}
                     </span>
                   )}
                 </div>

@@ -13,6 +13,14 @@ export default defineConfig({
     host: true,
     port: 5173,
     open: true,
+    // 局域网/本地共用：将 /api 代理到本机后端 3000，
+    // 前端使用相对路径 /api，无需硬编码后端 IP，也不会触发 CORS。
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
+    },
   },
   build: {
     chunkSizeWarningLimit: 1000,

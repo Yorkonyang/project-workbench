@@ -1,8 +1,30 @@
+# Dependencies
 node_modules
+
+# Build output
 dist
 dist-ssr
 *.local
+
+# OS / editor
 .DS_Store
+
+# Logs
 *.log
+
+# Env / secrets
 .env
 .env.*
+
+# Runtime data — contains real member data (emails, passwords). DO NOT COMMIT.
+# The backend auto-creates data/workbench.db from seed data on first run.
+data/
+
+# Secrets / scratch files
+Secret.txt
+*.cjs
+build_output.txt
+vite.config.js.timestamp-*.mjs
+
+# WorkBuddy internal working directory
+.workbuddy/

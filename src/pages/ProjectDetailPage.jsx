@@ -26,6 +26,7 @@ import { useDocumentStore } from '@/store/useDocumentStore';
 import { useRiskStore } from '@/store/useRiskStore';
 import { useResourceStore } from '@/store/useResourceStore';
 import { useMemberStore } from '@/store/useMemberStore';
+import { useAccess } from '@/hooks/useAccess';
 import { ROLES } from '@/config/permissions';
 
 const TABS = [
@@ -51,6 +52,7 @@ export default function ProjectDetailPage() {
   const resources = useResourceStore((s) => s.resources.filter((r) => r.projectId === id));
   const allMembers = useMemberStore((s) => s.members);
   const projectMembers = useMemo(() => allMembers.filter((m) => m.projectIds?.includes(id)), [allMembers, id]);
+  const { canManageProject } = useAccess();
 
   const [activeTab, setActiveTab] = useState('overview');
   const [showTaskForm, setShowTaskForm] = useState(false);
@@ -255,7 +257,7 @@ export default function ProjectDetailPage() {
       {activeTab === 'tasks' && (
         <Card
           title="项目任务"
-          actions={<Button size="sm" onClick={() => setShowTaskForm(true)}><Plus className="w-4 h-4" />新建</Button>}
+          actions={canManageProject(project) ? <Button size="sm" onClick={() => setShowTaskForm(true)}><Plus className="w-4 h-4" />新建</Button> : undefined}
         >
           <TaskList tasks={tasks} projects={allProjects} />
           {showTaskForm && <TaskForm defaultProjectId={id} onClose={() => setShowTaskForm(false)} />}

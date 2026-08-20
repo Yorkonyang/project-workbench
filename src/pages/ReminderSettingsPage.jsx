@@ -290,7 +290,7 @@ export default function ReminderSettingsPage() {
         </Card>
 
         {/* BPM 系统集成 */}
-        <Card title="BPM 系统集成（轻流）" icon={Plug}>
+        <Card title="BPM 推送集成（轻流 Q-Source）" icon={Plug}>
           <div className="space-y-4">
             <div className={cn(
               'flex items-center gap-2 px-3 py-2 rounded-lg text-sm',
@@ -307,6 +307,12 @@ export default function ReminderSettingsPage() {
                   : 'Q-Source ID 未配置，待办/任务无法推送到轻流 BPM 系统'}
               </span>
             </div>
+
+            <p className="text-xs text-slate-400 bg-slate-50 rounded-lg p-2.5">
+              <span className="font-medium text-slate-600">推送用途：</span>将项目工作台的待办事项和任务自动推送到轻流 BPM 系统。
+              <span className="font-medium text-slate-600 ml-2">配置位置：</span>轻流 → 设置 → 数据源 → Q-Source → 复制接口地址中的 UUID。
+              <span className="block mt-1 text-slate-500">注意：此配置仅用于数据推送，不包含组织架构同步功能（组织架构同步配置在「组织架构与成员」页面）。  同步配置与推送配置是两个独立配置。</span>
+            </p>
 
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1.5">

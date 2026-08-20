@@ -9,22 +9,24 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@hello-pangea/dnd": "^16.6.0",
+    "clsx": "^2.1.1",
+    "date-fns": "^3.6.0",
+    "lucide-react": "^0.408.0",
+    "nanoid": "^5.0.7",
+    "pinyin-pro": "^3.29.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.0",
-    "zustand": "^4.5.4",
     "recharts": "^2.12.7",
-    "date-fns": "^3.6.0",
-    "lucide-react": "^0.408.0",
-    "@hello-pangea/dnd": "^16.6.0",
-    "clsx": "^2.1.1",
-    "nanoid": "^5.0.7"
+    "xlsx": "^0.18.5",
+    "zustand": "^4.5.4"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.0",
-    "tailwindcss": "^3.4.7",
+    "autoprefixer": "^10.4.19",
     "postcss": "^8.4.40",
-    "autoprefixer": "^10.4.19"
+    "tailwindcss": "^3.4.7",
+    "vite": "^5.4.0"
   }
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -13,23 +13,14 @@ const STATUS_OPTIONS = [
 ];
 
 export default function MilestoneForm({ milestone, projects, onClose, onSave }) {
-  const [title, setTitle] = useState('');
-  const [projectId, setProjectId] = useState('');
-  const [date, setDate] = useState('');
-  const [status, setStatus] = useState('pending');
-  const [isCritical, setIsCritical] = useState(false);
-  const [deliverables, setDeliverables] = useState('');
-
-  useEffect(() => {
-    if (milestone) {
-      setTitle(milestone.title || '');
-      setProjectId(milestone.projectId || '');
-      setDate(milestone.date || '');
-      setStatus(milestone.status || 'pending');
-      setIsCritical(milestone.isCritical || false);
-      setDeliverables(milestone.deliverables || '');
-    }
-  }, [milestone]);
+  // 直接用 milestone 懒初始化，避免「先 false 再 useEffect 回填」在重开编辑时
+  // 因时序/双挂载导致复选框等字段未正确还原
+  const [title, setTitle] = useState(milestone?.title || '');
+  const [projectId, setProjectId] = useState(milestone?.projectId || '');
+  const [date, setDate] = useState(milestone?.date || '');
+  const [status, setStatus] = useState(milestone?.status || 'pending');
+  const [isCritical, setIsCritical] = useState(milestone?.isCritical || false);
+  const [deliverables, setDeliverables] = useState(milestone?.deliverables || '');
 
   const handleSubmit = (e) => {
     e.preventDefault();

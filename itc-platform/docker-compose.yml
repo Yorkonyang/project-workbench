@@ -1,0 +1,21 @@
+# 信息化中心管理平台 - 部署文件
+# 使用方式：docker compose up -d --build
+
+services:
+  itc-platform:
+    build: .
+    container_name: itc-platform
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      # 生产环境务必覆盖 JWT 密钥
+      - JWT_SECRET=${ITC_JWT_SECRET:-itc-platform-dev-secret-change-me}
+      - ITC_DB_PATH=/app/server/data/itc.db
+    volumes:
+      - itc-data:/app/server/data
+    restart: unless-stopped
+
+volumes:
+  itc-data:

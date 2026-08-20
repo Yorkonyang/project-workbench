@@ -1,11 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import { Check, X } from 'lucide-react';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useMemberStore } from '@/store/useMemberStore';
-import Select from '@/components/ui/Select';
+import { useDictionaryStore } from '@/store/useDictionaryStore';
+import MultiSelect from '@/components/ui/MultiSelect';
+import { buildMemberOptions, getPinnedValueSet, pinMemberId } from '@/lib/pinnedMembers';
 
 const COLORS = [
   { value: '#3b82f6', label: '蓝色' },
@@ -19,18 +21,22 @@ const COLORS = [
 ];
 
 const STATUSES = [
+  { value: 'planned', label: '待启动' },
   { value: 'in_progress', label: '进行中' },
   { value: 'paused', label: '暂停' },
   { value: 'completed', label: '已完成' },
 ];
 
-const PHASES = [
-  '需求调研', '方案设计', '一期开发', '二期开发', '测试上线', '运维优化', '待启动', '其他',
-];
-
 export default function ProjectForm({ project, onClose, onSave }) {
   const generateProjectCode = useProjectStore((s) => s.generateProjectCode);
   const members = useMemberStore((s) => s.members);
+  const allProjects = useProjectStore((s) => s.projects);
+  const projectTypes = useDictionaryStore((s) => s.projectTypes);
+  const projectStages = useDictionaryStore((s) => s.projectStages);
+
+  // 编辑时：如果项目已有 projectTypeId 则直接使用，否则尝试从 phase 反查
+  const initialTypeId = project?.projectTypeId || project?.project_type_id || '';
+  const [typeId, setTypeId] = useState(initialTypeId);
 
   const [formData, setFormData] = useState({
     code: project?.code || generateProjectCode(),
@@ -38,17 +44,44 @@ export default function ProjectForm({ project, onClose, onSave }) {
     description: '',
     startDate: '',
     endDate: '',
-    status: 'in_progress',
-    phase: '需求调研',
+    status: project?.status === 'active' ? 'in_progress' : (project?.status || 'planned'),
+    parentProjectId: '',
     color: COLORS[0].value,
     manager: '',
     ...project,
   });
 
+  const handleTypeChange = (e) => {
+    const nextTypeId = e.target.value;
+    setTypeId(nextTypeId);
+    // 切换项目类型时，重置类型为当前类型
+    setFormData((prev) => ({ ...prev, projectTypeId: nextTypeId }));
+  };
+
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
+
+  // 隶属项目选项：排除自身及其所有后代，避免层级关系形成环
+  const parentOptions = (() => {
+    const excluded = new Set();
+    if (project?.id) {
+      const byParent = {};
+      allProjects.forEach((p) => {
+        const k = p.parentProjectId || '_root';
+        (byParent[k] = byParent[k] || []).push(p.id);
+      });
+      const stack = [project.id];
+      while (stack.length) {
+        const cur = stack.pop();
+        (byParent[cur] || []).forEach((childId) => {
+          if (!excluded.has(childId)) { excluded.add(childId); stack.push(childId); }
+        });
+      }
+    }
+    return allProjects.filter((p) => p.id !== project?.id && !excluded.has(p.id) && !p.archived);
+  })();
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -56,7 +89,11 @@ export default function ProjectForm({ project, onClose, onSave }) {
       alert('请填写项目名称');
       return;
     }
-    onSave(formData);
+    if (formData.manager) pinMemberId(formData.manager);
+    onSave({
+      ...formData,
+      projectTypeId: typeId || '',
+    });
   };
 
   return (
@@ -105,6 +142,41 @@ export default function ProjectForm({ project, onClose, onSave }) {
 
         <div className="grid grid-cols-2 gap-4">
           <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              项目类型 <span className="text-primary-500 text-xs">(来自数据字典)</span>
+            </label>
+            <select
+              name="typeId"
+              value={typeId}
+              onChange={handleTypeChange}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-smooth bg-white"
+            >
+              <option value="">请选择项目类型</option>
+              {projectTypes.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              隶属项目 <span className="text-primary-500 text-xs">(可选，支持创建子项目)</span>
+            </label>
+            <select
+              name="parentProjectId"
+              value={formData.parentProjectId || ''}
+              onChange={handleChange}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-smooth bg-white"
+            >
+              <option value="">无（顶级项目）</option>
+              {parentOptions.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}（{p.code}）</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
             <label className="block text-sm font-medium text-slate-700 mb-1.5">开始日期</label>
             <Input
               type="date"
@@ -139,47 +211,36 @@ export default function ProjectForm({ project, onClose, onSave }) {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">当前阶段</label>
-            <select
-              name="phase"
-              value={formData.phase}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-smooth bg-white"
-            >
-              {PHASES.map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <Select
+            <MultiSelect
               label="项目负责人"
-              value={formData.manager || ''}
-              onChange={(value) => setFormData((prev) => ({ ...prev, manager: value }))}
-              placeholder="请选择负责人"
+              single
+              value={formData.manager ? [formData.manager] : []}
+              onChange={(vals) => setFormData((prev) => ({ ...prev, manager: vals[vals.length - 1] ?? '' }))}
               options={[
                 { value: '', label: '未分配' },
-                ...members.map((m) => ({ value: m.id, label: `${m.name} (${m.email})` })),
+                ...buildMemberOptions(members, { valueKey: 'id' }),
               ]}
+              pinnedValues={getPinnedValueSet(members, 'id')}
+              placeholder="搜索并选择负责人"
+              searchable
             />
           </div>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-2">项目颜色</label>
-          <div className="flex flex-wrap gap-2">
-            {COLORS.map((c) => (
-              <button
-                key={c.value}
-                type="button"
-                onClick={() => setFormData((prev) => ({ ...prev, color: c.value }))}
-                className={`w-8 h-8 rounded-lg transition-smooth ${
-                  formData.color === c.value ? 'ring-2 ring-offset-2 ring-primary-500 scale-110' : 'hover:scale-105'
-                }`}
-                style={{ backgroundColor: c.value }}
-                title={c.label}
-              />
-            ))}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">项目颜色</label>
+            <div className="flex flex-wrap gap-2 pt-1">
+              {COLORS.map((c) => (
+                <button
+                  key={c.value}
+                  type="button"
+                  onClick={() => setFormData((prev) => ({ ...prev, color: c.value }))}
+                  className={`w-8 h-8 rounded-lg transition-smooth ${
+                    formData.color === c.value ? 'ring-2 ring-offset-2 ring-primary-500 scale-110' : 'hover:scale-105'
+                  }`}
+                  style={{ backgroundColor: c.value }}
+                  title={c.label}
+                />
+              ))}
+            </div>
           </div>
         </div>
 

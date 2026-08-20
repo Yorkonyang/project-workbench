@@ -3,6 +3,7 @@ import { Pencil, Trash2, Calendar, User, TrendingUp, Archive } from 'lucide-reac
 import Badge from '@/components/ui/Badge';
 import { cn } from '@/lib/utils';
 import { useMemberStore } from '@/store/useMemberStore';
+import { useAccess } from '@/hooks/useAccess';
 
 const PRIORITY_CONFIG = {
   high: { label: '高', variant: 'danger' },
@@ -21,11 +22,19 @@ const STATUS_CONFIG = {
 
 export default function TaskCard({ task, project, onEdit, onDelete, onProgress, isArchived = false }) {
   const members = useMemberStore((s) => s.members);
-  const assignee = members.find((m) => m.id === task.assignee);
+  const { canManageTask, canReportTask } = useAccess();
+  const canEdit = canManageTask(task);   // 仅项目所有者可编辑/删除任务
+  const canReport = canReportTask(task); // 所有者或任务责任人(成员)可汇报
   const priorityConfig = PRIORITY_CONFIG[task.priority] || PRIORITY_CONFIG.medium;
   const statusConfig = isArchived
     ? { label: '已归档', variant: 'default' }
     : (STATUS_CONFIG[task.status] || STATUS_CONFIG.todo);
+
+  // 兼容旧数据
+  const assignees = task.assignees || (task.assignee ? [task.assignee] : []);
+  const assigneeMembers = assignees
+    .map((id) => members.find((m) => m.id === id))
+    .filter(Boolean);
 
   const handleCardClick = () => {
     if (isArchived || !onProgress) return;
@@ -58,7 +67,7 @@ export default function TaskCard({ task, project, onEdit, onDelete, onProgress, 
             <p className="text-xs text-slate-500 line-clamp-2 mt-1">{task.description}</p>
           )}
         </div>
-        {!isArchived && (
+        {!isArchived && canEdit && (
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-smooth">
             <button
               onClick={(e) => {
@@ -98,20 +107,27 @@ export default function TaskCard({ task, project, onEdit, onDelete, onProgress, 
               {task.dueDate}
             </span>
           )}
-          {assignee && (
+          {assigneeMembers.length > 0 && (
             <span className="flex items-center gap-1">
               <User className="w-3 h-3" />
-              <div
-                className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
-                style={{ backgroundColor: assignee.avatarColor }}
-              >
-                {assignee.name.charAt(0)}
+              <div className="flex -space-x-1.5">
+                {assigneeMembers.slice(0, 3).map((m, idx) => (
+                  <div
+                    key={m.id}
+                    className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold border border-white relative"
+                    style={{ backgroundColor: m.avatarColor, zIndex: assigneeMembers.length - idx }}
+                    title={m.name}
+                  >
+                    {m.name.charAt(0)}
+                  </div>
+                ))}
               </div>
-              {assignee.name}
+              {assigneeMembers.map((m) => m.name).join('、')}
+              {assigneeMembers.length > 3 && ` +${assigneeMembers.length - 3}`}
             </span>
           )}
         </div>
-        {!isArchived && task.status === 'in_progress' && (
+        {!isArchived && canReport && task.status === 'in_progress' && (
           <button
             onClick={(e) => {
               e.stopPropagation();

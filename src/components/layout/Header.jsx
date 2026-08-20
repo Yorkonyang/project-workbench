@@ -15,6 +15,7 @@ import { ROLES } from '@/config/permissions';
 import { exportAllData, importAllData, clearAllData } from '@/lib/dataManager';
 import { cn } from '@/lib/utils';
 import ChangePasswordForm from '@/components/members/ChangePasswordForm';
+import { bootstrapAfterLogout } from '@/lib/bootstrap';
 
 const ICON_MAP = { Clock, Calendar: CalIcon, AlertCircle, Bell, Flag, Info };
 
@@ -26,7 +27,7 @@ const PAGE_TITLES = {
   '/todos': '待办与提醒',
   '/risks': '风险管理',
   '/members': '人员管理',
-  '/notifications': '通知中心',
+  // /notifications 路由已移除，此处保留兼容
   '/reminder-settings': '提醒设置',
 };
 
@@ -74,8 +75,14 @@ export default function Header({ onMenuClick, onQuickAdd }) {
     setShowNotif(false);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setShowUserMenu(false);
+    // 先清数据缓存，防止上一个账号的项目/任务残留
+    try {
+      await bootstrapAfterLogout();
+    } catch (e) {
+      console.error('[Header] pre-logout cleanup failed:', e);
+    }
     logout();
     navigate('/login');
   };
@@ -126,7 +133,7 @@ export default function Header({ onMenuClick, onQuickAdd }) {
               <div className="absolute right-0 top-full mt-2 w-96 bg-white rounded-xl shadow-lg border border-slate-200 z-50 max-h-[480px] flex flex-col">
                 <div className="p-3 border-b border-slate-100 flex items-center justify-between">
                   <h3 className="font-semibold text-slate-800">
-                    通知中心
+                    待办提醒
                     {unreadCount > 0 && (
                       <span className="ml-2 text-xs text-red-500 font-medium">({unreadCount} 条未读)</span>
                     )}
@@ -190,10 +197,10 @@ export default function Header({ onMenuClick, onQuickAdd }) {
 
                 <div className="p-2 border-t border-slate-100">
                   <button
-                    onClick={() => { navigate('/notifications'); setShowNotif(false); }}
+                    onClick={() => { navigate('/todos'); setShowNotif(false); }}
                     className="w-full flex items-center justify-center gap-1 py-2 text-sm text-primary-600 hover:bg-primary-50 rounded-lg font-medium transition-smooth"
                   >
-                    查看全部通知
+                    查看全部待办
                     <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>

@@ -6,6 +6,7 @@ import { useMilestoneStore } from '@/store/useMilestoneStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
 import { useReminderConfigStore } from '@/store/useReminderConfigStore';
 import { useProjectStore } from '@/store/useProjectStore';
+import { useMemberStore } from '@/store/useMemberStore';
 
 /**
  * 提醒引擎 Hook
@@ -17,11 +18,26 @@ export function useReminderEngine() {
   const todos = useTodoStore((s) => s.todos);
   const milestones = useMilestoneStore((s) => s.milestones);
   const projects = useProjectStore((s) => s.projects);
+  const members = useMemberStore((s) => s.members);
   const addNotification = useNotificationStore((s) => s.addNotification);
   const notifications = useNotificationStore((s) => s.notifications);
   const config = useReminderConfigStore((s) => s.config);
   const configRef = useRef(config);
   configRef.current = config;
+
+  // 解析任务责任人名称列表（兼容 assignee 字符串和 assignees 数组）
+  const getAssigneeNames = (task) => {
+    const ids = task.assignees || (task.assignee ? [task.assignee] : []);
+    const names = ids
+      .map((id) => members.find((m) => m.id === id)?.name)
+      .filter(Boolean);
+    if (names.length === 0) {
+      // 回退：如果 seed data 使用名字而非 ID
+      const raw = task.assignee || '';
+      return raw ? [raw] : [];
+    }
+    return names;
+  };
 
   // 去重：检查是否已存在相同的通知
   const hasNotification = useCallback((relatedId, type) => {
@@ -65,7 +81,7 @@ export function useReminderEngine() {
           addNotification({
             type: 'due',
             title: `${projLabel}任务今日到期`,
-            message: `「${task.title}」今天到期，负责人：${task.assignee || '未分配'}`,
+            message: `「${task.title}」今天到期，负责人：${getAssigneeNames(task).join('、') || '未分配'}`,
             relatedId: task.id,
             relatedType: 'task',
             link: '/tasks',
@@ -83,9 +99,10 @@ export function useReminderEngine() {
             addNotification({
               type: 'overdue',
               title: `${projLabel}任务已逾期`,
-              message: `「${task.title}」已逾期 1 天，负责人：${task.assignee || '未分配'}`,
+              message: `「${task.title}」已逾期 1 天，负责人：${getAssigneeNames(task).join('、') || '未分配'}`,
               relatedId: task.id,
               relatedType: 'task',
+              overdueDays,
               link: '/tasks',
             });
           }
@@ -99,9 +116,10 @@ export function useReminderEngine() {
               addNotification({
                 type: 'escalation',
                 title: `${projLabel}催办：任务逾期 ${overdueDays} 天`,
-                message: `「${task.title}」已逾期 ${overdueDays} 天，请尽快处理！负责人：${task.assignee || '未分配'}`,
+                message: `「${task.title}」已逾期 ${overdueDays} 天，请尽快处理！负责人：${getAssigneeNames(task).join('、') || '未分配'}`,
                 relatedId: task.id,
                 relatedType: 'task',
+                overdueDays,
                 link: '/tasks',
               });
             }
@@ -156,6 +174,7 @@ export function useReminderEngine() {
               message: `「${todo.title}」已逾期 1 天`,
               relatedId: todo.id,
               relatedType: 'todo',
+              overdueDays,
               link: '/todos',
             });
           }
@@ -171,6 +190,7 @@ export function useReminderEngine() {
                 message: `「${todo.title}」已逾期 ${overdueDays} 天，请尽快处理！`,
                 relatedId: todo.id,
                 relatedType: 'todo',
+                overdueDays,
                 link: '/todos',
               });
             }
@@ -225,6 +245,7 @@ export function useReminderEngine() {
               message: `里程碑「${ms.title}」已逾期 1 天${ms.isCritical ? ' [关键里程碑]' : ''}`,
               relatedId: ms.id,
               relatedType: 'milestone',
+              overdueDays,
               link: '/timeline',
             });
           }

@@ -10,10 +10,11 @@ import RisksPage from '@/pages/RisksPage';
 import ProjectDetailPage from '@/pages/ProjectDetailPage';
 import ProjectsPage from '@/pages/ProjectsPage';
 import MembersPage from '@/pages/MembersPage';
-import NotificationsPage from '@/pages/NotificationsPage';
 import ReminderSettingsPage from '@/pages/ReminderSettingsPage';
+import DictionaryPage from '@/pages/DictionaryPage';
 import LoginPage from '@/pages/LoginPage';
 import { initSeedData } from '@/lib/seedData';
+import { refreshAllData } from '@/lib/bootstrap';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useTaskStore } from '@/store/useTaskStore';
@@ -24,6 +25,8 @@ import { useMilestoneStore } from '@/store/useMilestoneStore';
 import { useRiskStore } from '@/store/useRiskStore';
 import { useResourceStore } from '@/store/useResourceStore';
 import { useDocumentStore } from '@/store/useDocumentStore';
+import { useDictionaryStore } from '@/store/useDictionaryStore';
+import { useOrgStore } from '@/store/useOrgStore';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 export default function App() {
@@ -40,53 +43,59 @@ export default function App() {
   const fetchRisks = useRiskStore((s) => s.fetchRisks);
   const fetchResources = useResourceStore((s) => s.fetchResources);
   const fetchDocuments = useDocumentStore((s) => s.fetchDocuments);
+  const fetchProjectTypes = useDictionaryStore((s) => s.fetchProjectTypes);
+  const fetchProjectStages = useDictionaryStore((s) => s.fetchProjectStages);
+  const fetchDepartments = useOrgStore((s) => s.fetchDepartments);
 
   useEffect(() => {
-    // 调试日志
-    // 启动时清除旧的localStorage缓存，强制从API加载最新数据
-    const STORAGE_KEYS = [
+    // 注意：不要在这里清 pw_auth，保留登录态。
+    // 只清"按用户隔离的数据 store"的缓存（projects/tasks/todos/...），避免上个会话的脏数据被前端渲染。
+    // pw_members 是公共数据（成员名册 + 登录账号），不要清，否则登录页将无账号可匹配。
+    const DATA_KEYS = [
       'pw_projects', 'pw_tasks', 'pw_milestones', 'pw_documents',
-      'pw_todos', 'pw_risks', 'pw_resources', 'pw_members',
-      'pw_notifications', 'pw_reminder_config', 'pw_auth',
+      'pw_todos', 'pw_risks', 'pw_resources',
+      'pw_notifications', 'pw_reminder_config', 'pw_departments',
     ];
-    STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    DATA_KEYS.forEach((key) => localStorage.removeItem(key));
     localStorage.removeItem('pw_initialized');
-    console.log('[App] Cleared localStorage cache');
-    console.log('[App] Auth store hydrated:', useAuthStore.persist.hasHydrated());
-    console.log('[App] Auth state:', useAuthStore.getState());
+    console.log('[App] Cleared user-scoped data store localStorage cache (kept pw_auth & pw_members)');
 
-    // 设置超时：如果3秒后还没hydrated，强制显示页面
-    const timeout = setTimeout(() => {
-      console.warn('[App] Timeout waiting for hydration, forcing display');
-      setHydrated(true);
-    }, 3000);
+    // members 是公共数据，**无论登录与否**都需要拉取，否则 LoginPage 无法比对邮箱密码
+    fetchMembers().catch(err => console.error('[App] fetchMembers failed:', err));
 
-    // 等待 persist rehydration 完成
+    // 等待 auth store hydration 完成，再做初始加载
     const unsub = useAuthStore.persist.onFinishHydration(() => {
-      console.log('[App] Auth rehydration complete');
-      clearTimeout(timeout);
       setHydrated(true);
-      setDebugInfo(prev => ({ ...prev, hydrated: true }));
-      // 从 API 加载数据
-      loadFromApi();
-      // rehydration 完成后再次初始化种子数据
+      // 仅在已登录状态加载"按用户隔离的数据"；未登录则由 LoginPage 登录后的 bootstrapAfterLogin 负责拉数据
+      const isAuth = useAuthStore.getState().isAuthenticated;
+      const userId = useAuthStore.getState().currentUserId;
+      console.log('[App] Auth rehydrated, isAuth:', isAuth, 'userId:', userId);
+      if (isAuth && userId) {
+        loadFromApi();
+      }
       initSeedData();
     });
     if (useAuthStore.persist.hasHydrated()) {
-      console.log('[App] Auth already hydrated');
-      clearTimeout(timeout);
       setHydrated(true);
-      setDebugInfo(prev => ({ ...prev, hydrated: true }));
-      loadFromApi();
+      const isAuth = useAuthStore.getState().isAuthenticated;
+      const userId = useAuthStore.getState().currentUserId;
+      console.log('[App] Auth already hydrated, isAuth:', isAuth, 'userId:', userId);
+      if (isAuth && userId) {
+        loadFromApi();
+      }
       initSeedData();
     }
-
-    console.log('[App] useEffect cleanup');
-    return () => {
-      clearTimeout(timeout);
-      unsub();
-    };
+    return () => unsub();
   }, []);
+
+  // 监听登录态变化：登录后 / 切换账号后自动加载数据（防止 zustand persist 旧数据残留）
+  useEffect(() => {
+    if (!hydrated) return;
+    if (isAuthenticated) {
+      // 用户已登录：清空再拉取，确保数据按当前 currentUserId 过滤
+      refreshAllData().catch(err => console.error('[App] refreshAllData failed:', err));
+    }
+  }, [isAuthenticated, hydrated]);
 
   async function loadFromApi() {
     try {
@@ -102,6 +111,9 @@ export default function App() {
         fetchRisks(),
         fetchResources(),
         fetchDocuments(),
+        fetchProjectTypes(),
+        fetchProjectStages(),
+        fetchDepartments(),
       ]);
       // 同时加载当前用户的通知
       const userId = useAuthStore.getState().currentUserId;
@@ -152,8 +164,8 @@ export default function App() {
           <Route path="/todos" element={<TodosPage />} />
           <Route path="/risks" element={<RisksPage />} />
           <Route path="/members" element={<MembersPage />} />
-          <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/reminder-settings" element={<ReminderSettingsPage />} />
+          <Route path="/dictionary" element={<DictionaryPage />} />
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
         </Route>

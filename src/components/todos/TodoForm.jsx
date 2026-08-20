@@ -3,16 +3,24 @@ import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
+import MultiSelect from '@/components/ui/MultiSelect';
 import DatePicker from '@/components/ui/DatePicker';
 import { useTodoStore } from '@/store/useTodoStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useMemberStore } from '@/store/useMemberStore';
+import { useAccess } from '@/hooks/useAccess';
+import { buildMemberOptions, getPinnedValueSet, pinMemberId } from '@/lib/pinnedMembers';
 
 export default function TodoForm({ onClose, todo = null, defaultProjectId = null, defaultTaskId = null }) {
   const projects = useProjectStore((s) => s.projects);
   const members = useMemberStore((s) => s.members);
   const addTodo = useTodoStore((s) => s.addTodo);
   const updateTodo = useTodoStore((s) => s.updateTodo);
+  const { isAdmin, canManageProject } = useAccess();
+  // 待办可关联的项目：管理员全部；成员仅自己可管理的项目（从任务内加待办时 taskId 已隐含所属任务，无需在此选他人项目）
+  const allowedProjects = isAdmin
+    ? projects.filter((p) => !p.archived)
+    : projects.filter((p) => !p.archived && canManageProject(p));
 
   const [form, setForm] = useState({
     title: todo?.title || '',
@@ -29,6 +37,10 @@ export default function TodoForm({ onClose, todo = null, defaultProjectId = null
 
   const handleSubmit = () => {
     if (!form.title.trim()) return;
+    if (form.assignee) {
+      const m = members.find((x) => x.name === form.assignee);
+      if (m) pinMemberId(m.id);
+    }
     const data = {
       ...form,
       projectId: form.projectId || null,
@@ -88,21 +100,25 @@ export default function TodoForm({ onClose, todo = null, defaultProjectId = null
             value={form.projectId}
             onChange={set('projectId')}
             options={[
-              { value: '', label: '不关联' },
-              ...projects.filter(p => !p.archived).map((p) => ({ value: p.id, label: p.name })),
+              ...(isAdmin ? [{ value: '', label: '不关联' }] : []),
+              ...allowedProjects.map((p) => ({ value: p.id, label: p.name })),
             ]}
           />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
-          <Select
+          <MultiSelect
             label="负责人"
-            value={form.assignee}
-            onChange={set('assignee')}
+            single
+            searchable
+            placeholder="搜索并选择负责人"
+            value={form.assignee ? [form.assignee] : []}
+            onChange={(arr) => set('assignee')(arr[0] || '')}
             options={[
               { value: '', label: '未分配' },
-              ...members.map((m) => ({ value: m.name, label: m.name })),
+              ...buildMemberOptions(members, { valueKey: 'name' }),
             ]}
+            pinnedValues={getPinnedValueSet(members, 'name')}
           />
           <DatePicker label="截止日期" value={form.dueDate} onChange={set('dueDate')} />
         </div>

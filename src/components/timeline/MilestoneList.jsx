@@ -2,8 +2,11 @@ import { Flag, Edit2, Trash2 } from 'lucide-react';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
 import { getMilestoneStatusConfig, formatDate, getProjectColor } from '@/lib/utils';
+import { isMilestoneDone } from '@/config/theme';
+import { useAccess } from '@/hooks/useAccess';
 
 export default function MilestoneList({ milestones, projects, onEdit, onDelete }) {
+  const { canManageMilestone } = useAccess();
   const sorted = [...milestones].sort((a, b) => a.date.localeCompare(b.date));
 
   return (
@@ -24,12 +27,21 @@ export default function MilestoneList({ milestones, projects, onEdit, onDelete }
             {sorted.map((ms) => {
               const config = getMilestoneStatusConfig(ms.status);
               const project = projects?.find((p) => p.id === ms.projectId);
+              const done = isMilestoneDone(ms);
               return (
                 <tr key={ms.id} className="border-b border-slate-50 hover:bg-slate-50">
                   <td className="py-2.5 px-3">
                     <div className="flex items-center gap-1.5">
-                      <Flag className="w-3.5 h-3.5" style={{ color: config.color }} />
-                      <span className="font-medium text-slate-800">{ms.title}</span>
+                      {/* 已完成：实体小旗（填充），否则：空心旗 */}
+                      <Flag
+                        className={`w-4 h-4 ${done ? 'drop-shadow-sm' : ''}`}
+                        style={{
+                          color: done ? '#10b981' : config.color,
+                          fill: done ? '#10b981' : 'none',
+                          strokeWidth: done ? 0 : 2,
+                        }}
+                      />
+                      <span className={`font-medium ${done ? 'text-slate-900' : 'text-slate-800'}`}>{ms.title}</span>
                       {ms.isCritical && <Badge variant="danger" className="text-xs">关键</Badge>}
                     </div>
                   </td>
@@ -51,6 +63,7 @@ export default function MilestoneList({ milestones, projects, onEdit, onDelete }
                     {ms.deliverables || '-'}
                   </td>
                   <td className="py-2.5 px-3 text-right">
+                    {canManageMilestone(ms) && (
                     <div className="flex justify-end gap-1">
                       <button
                         onClick={() => onEdit?.(ms)}
@@ -65,6 +78,7 @@ export default function MilestoneList({ milestones, projects, onEdit, onDelete }
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
+                    )}
                   </td>
                 </tr>
               );

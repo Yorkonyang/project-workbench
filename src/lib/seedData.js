@@ -764,14 +764,12 @@ export function initSeedData() {
     setIfEmpty(useRiskStore, 'risks', SEED_DATA.risks);
     setIfEmpty(useResourceStore, 'resources', SEED_DATA.resources);
 
-    // 注入种子成员数据：为空或缺少 password 字段时重新注入
+    // 注入种子成员数据：仅当成员列表完全为空时兜底注入，
+    // 避免「个别成员缺 password」触发整盘覆盖，导致后端真实成员被种子假数据替换。
     const currentMembers = useMemberStore.getState().members;
-    const needsMemberSeed =
-      !currentMembers ||
-      currentMembers.length === 0 ||
-      currentMembers.some((m) => !m.password);
+    const membersEmpty = !currentMembers || currentMembers.length === 0;
 
-    if (needsMemberSeed) {
+    if (membersEmpty) {
       useMemberStore.setState({ members: SEED_DATA.members });
     }
 

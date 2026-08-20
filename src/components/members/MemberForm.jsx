@@ -4,6 +4,7 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import { useMemberStore } from '@/store/useMemberStore';
+import { useOrgStore } from '@/store/useOrgStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { ROLES } from '@/config/permissions';
 
@@ -14,6 +15,8 @@ const AVATAR_COLORS = [
 
 export default function MemberForm({ onClose, member = null }) {
   const projects = useProjectStore((s) => s.projects);
+  const departments = useOrgStore((s) => s.departments);
+  const allDepts = useOrgStore((s) => s.getAllDepartments());
   const addMember = useMemberStore((s) => s.addMember);
   const updateMember = useMemberStore((s) => s.updateMember);
 
@@ -23,7 +26,7 @@ export default function MemberForm({ onClose, member = null }) {
       return {
         name: '',
         role: 'member',
-        department: '',
+        departmentId: '',
         email: '',
         password: '',
         phone: '',
@@ -35,7 +38,7 @@ export default function MemberForm({ onClose, member = null }) {
     return {
       name: member.name || '',
       role: member.role || 'member',
-      department: member.department || '',
+      departmentId: member.departmentId || '',
       email: member.email || '',
       password: member.password || '',
       phone: member.phone || '',
@@ -49,10 +52,14 @@ export default function MemberForm({ onClose, member = null }) {
     if (!form.name.trim()) return;
     if (!form.email.trim()) return;
     if (!member && !form.password.trim()) return;
+    const payload = {
+      ...form,
+      department: form.departmentId, // 兼容旧字段
+    };
     if (member) {
-      updateMember(member.id, form);
+      updateMember(member.id, payload);
     } else {
-      addMember(form);
+      addMember(payload);
     }
     onClose();
   };
@@ -102,11 +109,14 @@ export default function MemberForm({ onClose, member = null }) {
         </div>
 
         <div className="grid grid-cols-2 gap-4">
-          <Input
-            label="部门"
-            value={form.department}
-            onChange={(e) => set('department')(e.target.value)}
-            placeholder="如：信息化中心"
+          <Select
+            label="所属部门"
+            value={form.departmentId}
+            onChange={set('departmentId')}
+            options={[
+              { value: '', label: '未分配部门' },
+              ...allDepts.map((d) => ({ value: d.id, label: d.name })),
+            ]}
           />
           <Input
             label="职务"

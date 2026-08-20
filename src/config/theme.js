@@ -31,12 +31,24 @@ export const TASK_STATUS_CONFIG = {
 export const TASK_STATUS_ORDER = ['todo', 'in_progress', 'review', 'done', 'blocked'];
 
 // Milestone status mapping
+// 兼容两种枚举：表单/新建使用的 pending/in_progress/done/blocked + 旧数据 upcoming/achieved/delayed/at_risk
 export const MILESTONE_STATUS_CONFIG = {
+  // 新枚举（表单选项）
+  pending: { label: '待开始', color: '#6b7280', bgClass: 'bg-slate-100', textClass: 'text-slate-600' },
+  in_progress: { label: '进行中', color: '#3b82f6', bgClass: 'bg-blue-50', textClass: 'text-blue-600' },
+  done: { label: '已完成', color: '#10b981', bgClass: 'bg-green-50', textClass: 'text-green-600' },
+  blocked: { label: '已阻塞', color: '#ef4444', bgClass: 'bg-red-50', textClass: 'text-red-600' },
+  // 旧枚举（兼容历史数据）
   upcoming: { label: '即将到来', color: '#3b82f6', bgClass: 'bg-blue-50', textClass: 'text-blue-600' },
   achieved: { label: '已达成', color: '#10b981', bgClass: 'bg-green-50', textClass: 'text-green-600' },
   delayed: { label: '已延迟', color: '#ef4444', bgClass: 'bg-red-50', textClass: 'text-red-600' },
   at_risk: { label: '有风险', color: '#f59e0b', bgClass: 'bg-amber-50', textClass: 'text-amber-600' },
 };
+
+// 里程碑是否已完成（兼容两种枚举）
+export function isMilestoneDone(milestone) {
+  return milestone?.status === 'done' || milestone?.status === 'achieved';
+}
 
 // Risk severity mapping
 export const RISK_SEVERITY_CONFIG = {

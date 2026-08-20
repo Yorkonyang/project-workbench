@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Mail, Lock, Eye, EyeOff, LogIn, AlertCircle, Building2 } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
+import { useMemberStore } from '@/store/useMemberStore';
 import { initSeedData } from '@/lib/seedData';
+import { bootstrapAfterLogin } from '@/lib/bootstrap';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -24,15 +26,33 @@ export default function LoginPage() {
     if (isAuthenticated) navigate('/');
   }, [isAuthenticated, navigate]);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     clearError();
     setLoading(true);
-    setTimeout(() => {
+
+    try {
+      // 防御：若前端冷启动时 members 列表尚未拉取（空），触发一次 fetch 再比对
+      const memberStore = useMemberStore.getState();
+      if (!memberStore.members || memberStore.members.length === 0) {
+        await memberStore.fetchMembers();
+      }
+
       const success = login(email, password);
+      if (success) {
+        // 切换账号：清空所有数据 store 的 localStorage 缓存与内存数据，
+        // 然后用新的 currentUserId 重新拉取（后端 accessControl 按可见性过滤）。
+        // 防止上一个账号的项目/任务/文档等数据残留在 store 里继续展示。
+        try {
+          await bootstrapAfterLogin();
+        } catch (err) {
+          console.error('[Login] post-login refresh failed:', err);
+        }
+        navigate('/');
+      }
+    } finally {
       setLoading(false);
-      if (success) navigate('/');
-    }, 300);
+    }
   };
 
   return (

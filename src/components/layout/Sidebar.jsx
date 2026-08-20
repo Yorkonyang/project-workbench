@@ -13,9 +13,10 @@ import {
   Users,
   Settings,
   FolderKanban,
+  BookOpen,
+  Building2,
 } from 'lucide-react';
 import { useProjectStore } from '@/store/useProjectStore';
-import { useNotificationStore } from '@/store/useNotificationStore';
 import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
@@ -29,23 +30,14 @@ const NAV_ITEMS = [
 ];
 
 const ADMIN_ITEMS = [
-  { path: '/members', label: '人员管理', icon: Users },
-  { path: '/notifications', label: '通知中心', icon: Bell },
+  { path: '/members', label: '组织架构与成员', icon: Building2 },
+  { path: '/dictionary', label: '数据字典', icon: BookOpen },
   { path: '/reminder-settings', label: '提醒设置', icon: Settings },
 ];
 
 export default function Sidebar({ isOpen, onClose }) {
   const location = useLocation();
   const projects = useProjectStore((s) => s.projects);
-  const notifications = useNotificationStore((s) => s.notifications);
-  // Filter out notifications from archived projects for badge count
-  const activeProjectIds = new Set(projects.filter((p) => !p.archived).map((p) => p.id));
-  const unreadCount = notifications.filter((n) => {
-    if (!n.read) return false;
-    if (!n.relatedId) return true;
-    if (n.type === 'archive_requested' || n.type === 'archive_approved' || n.type === 'archive_rejected') return true;
-    return activeProjectIds.has(n.relatedId);
-  }).length;
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
 
@@ -82,7 +74,7 @@ export default function Sidebar({ isOpen, onClose }) {
                 <Database className="w-4 h-4 text-white" />
               </div>
               <div>
-                <span className="font-bold text-white text-sm tracking-wide whitespace-nowrap block">
+                <span className="font-bold text-white text-base tracking-wide whitespace-nowrap block">
                   项目工作台
                 </span>
                 <span className="text-[10px] text-slate-400 tracking-wider uppercase">
@@ -122,7 +114,7 @@ export default function Sidebar({ isOpen, onClose }) {
                   end={item.path === '/'}
                   onClick={() => window.innerWidth < 1024 && onClose()}
                   className={cn(
-                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-smooth relative',
+                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-base font-medium transition-smooth relative',
                     isActive
                       ? 'bg-primary-500/20 text-primary-300'
                       : 'text-slate-400 hover:bg-white/5 hover:text-white',
@@ -161,7 +153,7 @@ export default function Sidebar({ isOpen, onClose }) {
                   to={item.path}
                   onClick={() => window.innerWidth < 1024 && onClose()}
                   className={cn(
-                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-smooth relative',
+                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-base font-medium transition-smooth relative',
                     isActive
                       ? 'bg-primary-500/20 text-primary-300'
                       : 'text-slate-400 hover:bg-white/5 hover:text-white',
@@ -175,12 +167,6 @@ export default function Sidebar({ isOpen, onClose }) {
                   )}
                   <Icon className="w-5 h-5 shrink-0" />
                   {!collapsed && <span className="whitespace-nowrap">{item.label}</span>}
-                  {/* 通知未读数角标 */}
-                  {item.path === '/notifications' && unreadCount > 0 && (
-                    <span className="absolute top-1.5 right-1.5 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                      {unreadCount > 99 ? '99+' : unreadCount}
-                    </span>
-                  )}
                 </NavLink>
               );
             })}

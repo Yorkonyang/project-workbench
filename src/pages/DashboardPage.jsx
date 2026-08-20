@@ -80,7 +80,7 @@ export default function DashboardPage() {
           value={unreadNotifs}
           sublabel={`共 ${notifications.length} 条`}
           color="#D97706"
-          onClick={() => navigate('/notifications')}
+          onClick={() => navigate('/todos')}
         />
       </div>
 

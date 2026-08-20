@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Archive, RotateCcw, Search, FileText, Check, X } from 'lucide-react';
+import { Plus, Archive, RotateCcw, FileText, Check, X } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Button from '@/components/ui/Button';
 import ProjectForm from '@/components/projects/ProjectForm';
@@ -17,7 +17,7 @@ export default function ProjectsPage() {
   const [editingProject, setEditingProject] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
   const [showPending, setShowPending] = useState(false);
-  const [search, setSearch] = useState('');
+  const [queryProjectId, setQueryProjectId] = useState('');
   const [archiveReason, setArchiveReason] = useState('');
   const [archiveNote, setArchiveNote] = useState('');
   const [pendingArchiveProject, setPendingArchiveProject] = useState(null);
@@ -41,17 +41,31 @@ export default function ProjectsPage() {
   const archivedProjects = projects.filter((p) => p.archived);
   const pendingArchiveProjects = projects.filter((p) => p.archiveStatus === 'requested');
 
-  const filteredActive = activeProjects.filter((p) => {
-    const name = (p.name || p.title || '').toLowerCase();
-    const code = (p.code || '').toLowerCase();
-    return name.includes(search.toLowerCase()) || code.includes(search.toLowerCase());
-  });
+  // 下拉查询：仅列出「进行中」项目
+  const inProgressProjects = projects.filter((p) => !p.archived && p.status === 'in_progress');
 
-  const filteredArchived = archivedProjects.filter((p) => {
-    const name = (p.name || p.title || '').toLowerCase();
-    const code = (p.code || '').toLowerCase();
-    return name.includes(search.toLowerCase()) || code.includes(search.toLowerCase());
-  });
+  // 选中项目后，连同其全部下级隶属项目（递归）一起展示
+  const collectSubtree = (rootId) => {
+    const ids = new Set([rootId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      projects.forEach((p) => {
+        if (p.parentProjectId && ids.has(p.parentProjectId) && !ids.has(p.id)) {
+          ids.add(p.id);
+          changed = true;
+        }
+      });
+    }
+    return ids;
+  };
+  const subtreeIds = queryProjectId ? collectSubtree(queryProjectId) : null;
+
+  const filteredActive = subtreeIds
+    ? activeProjects.filter((p) => subtreeIds.has(p.id))
+    : activeProjects;
+
+  const filteredArchived = archivedProjects;
 
   const handleSave = (data) => {
     if (editingProject) {
@@ -170,7 +184,7 @@ export default function ProjectsPage() {
   return (
     <PageContainer
       title="项目管理"
-      subtitle={`${activeProjects.length} 个进行中的项目`}
+      subtitle={`${activeProjects.length} 个活跃项目`}
       action={
         <Button size="sm" onClick={() => { setEditingProject(null); setShowForm(true); }}>
           <Plus className="w-4 h-4" />
@@ -178,18 +192,28 @@ export default function ProjectsPage() {
         </Button>
       }
     >
-      {/* Search & Toggle */}
+      {/* 下拉查询：仅列出进行中项目，选中后展示其全部子项目 */}
       <div className="flex items-center gap-3 mb-5">
         <div className="flex-1 max-w-xs relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索项目..."
-            className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-smooth"
-          />
+          <select
+            value={queryProjectId}
+            onChange={(e) => setQueryProjectId(e.target.value)}
+            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-smooth bg-white"
+          >
+            <option value="">全部项目</option>
+            {inProgressProjects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}（{p.code}）</option>
+            ))}
+          </select>
         </div>
+        {queryProjectId && (
+          <button
+            onClick={() => setQueryProjectId('')}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-smooth bg-slate-100 text-slate-600 hover:bg-slate-200"
+          >
+            ← 返回全部项目
+          </button>
+        )}
         {showPending && (
           <button
             onClick={() => { setShowPending(false); }}

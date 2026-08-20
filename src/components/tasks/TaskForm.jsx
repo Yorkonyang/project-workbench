@@ -3,10 +3,12 @@ import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
+import MultiSelect from '@/components/ui/MultiSelect';
 import DatePicker from '@/components/ui/DatePicker';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useMemberStore } from '@/store/useMemberStore';
+import { buildMemberOptions, getPinnedValueSet, pinMemberIds } from '@/lib/pinnedMembers';
 
 export default function TaskForm({ onClose, task = null, defaultProjectId = null }) {
   const projects = useProjectStore((s) => s.projects);
@@ -14,11 +16,16 @@ export default function TaskForm({ onClose, task = null, defaultProjectId = null
   const addTask = useTaskStore((s) => s.addTask);
   const updateTask = useTaskStore((s) => s.updateTask);
 
+  // 兼容旧数据：将 assignee 转为 assignees[]
+  const initAssignees = task
+    ? (Array.isArray(task.assignees) ? task.assignees : (task.assignee ? [task.assignee] : []))
+    : [];
+
   const [form, setForm] = useState({
     projectId: task?.projectId || defaultProjectId || projects[0]?.id || '',
     title: task?.title || '',
     description: task?.description || '',
-    assignee: task?.assignee || '',
+    assignees: initAssignees,
     priority: task?.priority || 'medium',
     status: task?.status || 'todo',
     startDate: task?.startDate || new Date().toISOString().split('T')[0],
@@ -31,11 +38,19 @@ export default function TaskForm({ onClose, task = null, defaultProjectId = null
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!form.title.trim()) return;
+    pinMemberIds(form.assignees);
     const now = new Date().toISOString();
+    // 保存时同时写入 assignees（新）和 assignee（旧兼容）
+    const payload = {
+      ...form,
+      tags: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
+      assignees: form.assignees || [],
+      assignee: form.assignees?.[0] || '', // 保留首个作为主负责人
+    };
     if (task) {
-      updateTask(task.id, { ...form, tags: form.tags.split(',').map((t) => t.trim()).filter(Boolean), updatedAt: now });
+      updateTask(task.id, { ...payload, updatedAt: now });
     } else {
-      addTask(form.projectId, { ...form, tags: form.tags.split(',').map((t) => t.trim()).filter(Boolean), createdAt: now, updatedAt: now });
+      addTask(form.projectId, { ...payload, createdAt: now, updatedAt: now });
     }
     onClose();
   };
@@ -68,17 +83,6 @@ export default function TaskForm({ onClose, task = null, defaultProjectId = null
             options={projects.map((p) => ({ value: p.id, label: p.name }))}
           />
           <Select
-            label="负责人"
-            value={form.assignee}
-            onChange={set('assignee')}
-            options={[
-              { value: '', label: '未分配' },
-              ...members.map((m) => ({ value: m.id, label: `${m.name} (${m.email})` })),
-            ]}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <Select
             label="优先级"
             value={form.priority}
             onChange={set('priority')}
@@ -88,18 +92,27 @@ export default function TaskForm({ onClose, task = null, defaultProjectId = null
               { value: 'low', label: '低优先级' },
             ]}
           />
-          <Select
-            label="状态"
-            value={form.status}
-            onChange={set('status')}
-            options={[
-              { value: 'todo', label: '待开始' },
-              { value: 'in_progress', label: '进行中' },
-              { value: 'review', label: '审核中' },
-              { value: 'done', label: '已完成' },
-            ]}
-          />
         </div>
+        <MultiSelect
+          label="责任人（可多选）"
+          value={form.assignees}
+          onChange={(val) => set('assignees')(val)}
+          options={buildMemberOptions(members, { valueKey: 'id' })}
+          pinnedValues={getPinnedValueSet(members, 'id')}
+          placeholder="选择责任人"
+          searchable
+        />
+        <Select
+          label="状态"
+          value={form.status}
+          onChange={set('status')}
+          options={[
+            { value: 'todo', label: '待开始' },
+            { value: 'in_progress', label: '进行中' },
+            { value: 'review', label: '审核中' },
+            { value: 'done', label: '已完成' },
+          ]}
+        />
         <div className="grid grid-cols-2 gap-4">
           <DatePicker
             label="开始日期"

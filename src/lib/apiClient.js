@@ -3,7 +3,13 @@
  * 前端与后端 API 交互的封装层
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+// 默认使用相对路径 /api，由 vite 开发服务器代理到后端（localhost:3000），
+// 这样局域网内其他电脑访问时无需把后端地址硬编码成本机 IP，也不会触发 CORS。
+// 生产部署可通过环境变量 VITE_API_URL 覆盖为绝对地址。
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
+// 当前登录用户 id，随每个请求通过 x-user-id 头传给后端，用于项目负责制的归属过滤与写校验
+import { useAuthStore } from '@/store/useAuthStore';
 
 class ApiClient {
     constructor() {
@@ -12,9 +18,11 @@ class ApiClient {
 
     async request(endpoint, options = {}) {
         const url = `${this.baseURL}${endpoint}`;
+        const currentUserId = useAuthStore.getState().currentUserId;
         const config = {
             headers: {
                 'Content-Type': 'application/json',
+                'x-user-id': currentUserId || '',
                 ...options.headers,
             },
             ...options,
@@ -23,7 +31,13 @@ class ApiClient {
         try {
             const response = await fetch(url, config);
             if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                // 优先透传后端返回的错误消息（如排序号冲突提示）
+                let message = `HTTP ${response.status}: ${response.statusText}`;
+                try {
+                    const data = await response.json();
+                    if (data && data.error) message = data.error;
+                } catch (e) { /* 忽略解析失败 */ }
+                throw new Error(message);
             }
             return await response.json();
         } catch (error) {
@@ -163,6 +177,39 @@ class ApiClient {
     async deleteMember(id) {
         return this.request(`/members/${id}`, {
             method: 'DELETE',
+        });
+    }
+
+    // Departments (组织架构)
+    async getDepartments() {
+        return this.request('/departments');
+    }
+
+    async createDepartment(data) {
+        return this.request('/departments', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateDepartment(id, data) {
+        return this.request(`/departments/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteDepartment(id) {
+        return this.request(`/departments/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // Excel 导入组织架构和成员
+    async importOrganization(data) {
+        return this.request('/organization/import', {
+            method: 'POST',
+            body: JSON.stringify(data),
         });
     }
 
@@ -338,6 +385,57 @@ class ApiClient {
 
     async testQingflowConnection() {
         return this.request('/qingflow/test');
+    }
+
+    // ===== 项目类型字典 =====
+    async getProjectTypes() {
+        return this.request('/project-types');
+    }
+
+    async createProjectType(data) {
+        return this.request('/project-types', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateProjectType(id, data) {
+        return this.request(`/project-types/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteProjectType(id) {
+        return this.request(`/project-types/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // ===== 项目阶段字典 =====
+    async getProjectStages(projectTypeId) {
+        const query = projectTypeId ? `?projectTypeId=${projectTypeId}` : '';
+        return this.request(`/project-stages${query}`);
+    }
+
+    async createProjectStage(data) {
+        return this.request('/project-stages', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateProjectStage(id, data) {
+        return this.request(`/project-stages/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteProjectStage(id) {
+        return this.request(`/project-stages/${id}`, {
+            method: 'DELETE',
+        });
     }
 }
 

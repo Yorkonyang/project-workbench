@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Plus, CheckCircle2, Clock, CalendarClock, CheckSquare, AlertTriangle } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Button from '@/components/ui/Button';
@@ -11,9 +11,10 @@ import ReminderBanner from '@/components/todos/ReminderBanner';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { useTodoStore } from '@/store/useTodoStore';
 import { useTaskStore } from '@/store/useTaskStore';
-import { useReminders } from '@/hooks/useReminders';
 import { useProjectStore } from '@/store/useProjectStore';
+import { useAuthStore } from '@/store/useAuthStore';
 import { isOverdue } from '@/lib/utils';
+import { isToday, isTomorrow, isPast, parseISO } from 'date-fns';
 
 export default function TodosPage() {
   const todos = useTodoStore((s) => s.todos);
@@ -21,18 +22,56 @@ export default function TodosPage() {
   const toggleTodo = useTodoStore((s) => s.toggleTodo);
   const deleteTodo = useTodoStore((s) => s.deleteTodo);
   const projects = useProjectStore((s) => s.projects);
-  const { todoDueToday, todoDueTomorrow, todoOverdue, taskDueToday, taskDueTomorrow, taskOverdue } = useReminders();
+  const currentUser = useAuthStore((s) => s.currentUser());
 
   const [showForm, setShowForm] = useState(false);
   const [editingTodo, setEditingTodo] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [progressTask, setProgressTask] = useState(null);
-  const [filter, setFilter] = useState('all'); // all | todo | task | active | completed
+  const [filter, setFilter] = useState('all');
+
+  // ===== 权限过滤（统一） =====
+  // admin：可见所有
+  // pm：可见其负责项目的待办/任务
+  // member/viewer：仅可见分配给自己的（按 id/name/email 匹配 assignee 或 assignees）
+  const userMatch = useMemo(() => {
+    const role = currentUser?.role || 'member';
+    const userId = currentUser?.id || '';
+    const userName = currentUser?.name || '';
+    const userEmail = currentUser?.email || '';
+    return { role, userId, userName, userEmail };
+  }, [currentUser]);
+
+  const isVisible = useMemo(() => (item) => {
+    const { role, userId, userName, userEmail } = userMatch;
+    // admin：全部可见
+    if (role === 'admin') return true;
+    // pm：按项目过滤
+    if (role === 'pm') {
+      const managedProjectIds = new Set(
+        projects.filter((p) => p.manager === userId).map((p) => p.id)
+      );
+      return managedProjectIds.has(item.projectId);
+    }
+    // member/viewer：按 assignee/assignees 匹配
+    const assignee = item.assignee;
+    const assignees = Array.isArray(item.assignees) ? item.assignees : (assignee ? [assignee] : []);
+    return assignees.some((a) => a === userId || a === userName || a === userEmail);
+  }, [userMatch, projects]);
 
   // Filter out archived projects
   const activeProjectIds = new Set(projects.filter((p) => !p.archived).map((p) => p.id));
-  const filteredTodos = todos.filter((t) => !t.projectId || activeProjectIds.has(t.projectId));
-  const filteredTasks = tasks.filter((t) => t.status !== 'done' && t.status !== 'blocked' && (!t.projectId || activeProjectIds.has(t.projectId)));
+
+  // 可见待办
+  const visibleTodos = todos.filter((t) => isVisible(t));
+  const filteredTodos = visibleTodos.filter((t) => !t.projectId || activeProjectIds.has(t.projectId));
+
+  // 可见任务
+  const visibleTasks = tasks.filter((t) => isVisible(t));
+  const filteredTasks = visibleTasks.filter((t) =>
+    t.status !== 'done' && t.status !== 'blocked' &&
+    (!t.projectId || activeProjectIds.has(t.projectId))
+  );
 
   // 排序：逾期置顶，有截止日升序，无截止日排最后
   const sortedTodos = [...filteredTodos].sort((a, b) => {
@@ -45,8 +84,22 @@ export default function TodosPage() {
     return 0;
   });
 
-  const todoActiveCount = sortedTodos.filter((t) => !t.completed).length;
-  const taskActiveCount = filteredTasks.filter((t) => t.status !== 'done' && t.status !== 'blocked').length;
+  // ===== 本地统计（基于可见数据） =====
+  const activeTodoList = filteredTodos.filter((t) => !t.completed);
+  const todoDueToday = activeTodoList.filter((t) => t.dueDate && isToday(parseISO(t.dueDate)));
+  const todoDueTomorrow = activeTodoList.filter((t) => t.dueDate && isTomorrow(parseISO(t.dueDate)));
+  const todoOverdue = activeTodoList.filter(
+    (t) => t.dueDate && isPast(parseISO(t.dueDate)) && !isToday(parseISO(t.dueDate))
+  );
+
+  const activeTaskList = filteredTasks.filter((t) => t.status !== 'done' && t.status !== 'blocked');
+  const taskDueToday = activeTaskList.filter((t) => t.dueDate && isToday(parseISO(t.dueDate)));
+  const taskDueTomorrow = activeTaskList.filter((t) => t.dueDate && isTomorrow(parseISO(t.dueDate)));
+  const taskOverdue = activeTaskList.filter(
+    (t) => t.dueDate && isPast(parseISO(t.dueDate)) && !isToday(parseISO(t.dueDate))
+  );
+
+  const taskActiveCount = activeTaskList.length;
   const todoCompletedCount = sortedTodos.filter((t) => t.completed).length;
 
   const handleEdit = (todo) => {

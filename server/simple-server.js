@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const qingflow = require('./qingflow');
+const ac = require('./accessControl');
 
 const PORT = process.env.PORT || 3000;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../data/workbench.db');
@@ -29,7 +30,51 @@ if (!fs.existsSync(DB_PATH)) {
         notifications: [],
         risks: [],
         resources: [],
-        milestones: []
+        milestones: [],
+        projectTypes: [
+            { id: 'pt-software', name: '软件开发', description: '软件开发类项目', sortOrder: 1, created_at: new Date().toISOString() },
+            { id: 'pt-hardware', name: '硬件研发', description: '硬件研发类项目', sortOrder: 2, created_at: new Date().toISOString() },
+            { id: 'pt-infrastructure', name: '基础设施建设', description: '基础设施建设项目', sortOrder: 3, created_at: new Date().toISOString() },
+            { id: 'pt-consulting', name: '管理咨询', description: '管理咨询类项目', sortOrder: 4, created_at: new Date().toISOString() },
+            { id: 'pt-manufacturing', name: '生产制造', description: '生产制造类项目', sortOrder: 5, created_at: new Date().toISOString() },
+            { id: 'pt-other', name: '其他', description: '其他类型项目', sortOrder: 99, created_at: new Date().toISOString() },
+        ],
+        projectStages: [
+            // 软件开发
+            { id: 'ps-sw-01', name: '需求调研', projectTypeId: 'pt-software', sortOrder: 1, created_at: new Date().toISOString() },
+            { id: 'ps-sw-02', name: '方案设计', projectTypeId: 'pt-software', sortOrder: 2, created_at: new Date().toISOString() },
+            { id: 'ps-sw-03', name: '一期开发', projectTypeId: 'pt-software', sortOrder: 3, created_at: new Date().toISOString() },
+            { id: 'ps-sw-04', name: '二期开发', projectTypeId: 'pt-software', sortOrder: 4, created_at: new Date().toISOString() },
+            { id: 'ps-sw-05', name: '测试上线', projectTypeId: 'pt-software', sortOrder: 5, created_at: new Date().toISOString() },
+            { id: 'ps-sw-06', name: '运维优化', projectTypeId: 'pt-software', sortOrder: 6, created_at: new Date().toISOString() },
+            // 硬件研发
+            { id: 'ps-hw-01', name: '概念设计', projectTypeId: 'pt-hardware', sortOrder: 1, created_at: new Date().toISOString() },
+            { id: 'ps-hw-02', name: '工程验证', projectTypeId: 'pt-hardware', sortOrder: 2, created_at: new Date().toISOString() },
+            { id: 'ps-hw-03', name: '设计验证', projectTypeId: 'pt-hardware', sortOrder: 3, created_at: new Date().toISOString() },
+            { id: 'ps-hw-04', name: '小批量试产', projectTypeId: 'pt-hardware', sortOrder: 4, created_at: new Date().toISOString() },
+            { id: 'ps-hw-05', name: '量产验证', projectTypeId: 'pt-hardware', sortOrder: 5, created_at: new Date().toISOString() },
+            // 基础设施建设
+            { id: 'ps-in-01', name: '立项评估', projectTypeId: 'pt-infrastructure', sortOrder: 1, created_at: new Date().toISOString() },
+            { id: 'ps-in-02', name: '规划设计', projectTypeId: 'pt-infrastructure', sortOrder: 2, created_at: new Date().toISOString() },
+            { id: 'ps-in-03', name: '招标采购', projectTypeId: 'pt-infrastructure', sortOrder: 3, created_at: new Date().toISOString() },
+            { id: 'ps-in-04', name: '施工建设', projectTypeId: 'pt-infrastructure', sortOrder: 4, created_at: new Date().toISOString() },
+            { id: 'ps-in-05', name: '竣工验收', projectTypeId: 'pt-infrastructure', sortOrder: 5, created_at: new Date().toISOString() },
+            // 管理咨询
+            { id: 'ps-co-01', name: '现状诊断', projectTypeId: 'pt-consulting', sortOrder: 1, created_at: new Date().toISOString() },
+            { id: 'ps-co-02', name: '方案设计', projectTypeId: 'pt-consulting', sortOrder: 2, created_at: new Date().toISOString() },
+            { id: 'ps-co-03', name: '实施辅导', projectTypeId: 'pt-consulting', sortOrder: 3, created_at: new Date().toISOString() },
+            { id: 'ps-co-04', name: '总结验收', projectTypeId: 'pt-consulting', sortOrder: 4, created_at: new Date().toISOString() },
+            // 生产制造
+            { id: 'ps-mf-01', name: '工艺规划', projectTypeId: 'pt-manufacturing', sortOrder: 1, created_at: new Date().toISOString() },
+            { id: 'ps-mf-02', name: '设备采购', projectTypeId: 'pt-manufacturing', sortOrder: 2, created_at: new Date().toISOString() },
+            { id: 'ps-mf-03', name: '安装调试', projectTypeId: 'pt-manufacturing', sortOrder: 3, created_at: new Date().toISOString() },
+            { id: 'ps-mf-04', name: '试生产', projectTypeId: 'pt-manufacturing', sortOrder: 4, created_at: new Date().toISOString() },
+            { id: 'ps-mf-05', name: '正式投产', projectTypeId: 'pt-manufacturing', sortOrder: 5, created_at: new Date().toISOString() },
+            // 其他
+            { id: 'ps-ot-01', name: '待启动', projectTypeId: 'pt-other', sortOrder: 1, created_at: new Date().toISOString() },
+            { id: 'ps-ot-02', name: '进行中', projectTypeId: 'pt-other', sortOrder: 2, created_at: new Date().toISOString() },
+            { id: 'ps-ot-03', name: '已完成', projectTypeId: 'pt-other', sortOrder: 3, created_at: new Date().toISOString() },
+        ],
     };
     fs.writeFileSync(DB_PATH, JSON.stringify(initialData, null, 2));
     console.log('数据库初始化完成:', DB_PATH);
@@ -44,6 +89,8 @@ function loadData() {
         if (!parsed.risks) parsed.risks = [];
         if (!parsed.resources) parsed.resources = [];
         if (!parsed.milestones) parsed.milestones = [];
+        if (!parsed.projectTypes) parsed.projectTypes = [];
+        if (!parsed.projectStages) parsed.projectStages = [];
         return parsed;
     } catch (err) {
         return { projects: [], tasks: [], todos: [], members: [], documents: [], notifications: [], risks: [], resources: [], milestones: [] };
@@ -58,6 +105,16 @@ function saveData(data) {
 // 生成唯一ID
 function generateId() {
     return crypto.randomUUID();
+}
+
+/**
+ * 计算下一个排序号：取当前最大排序号 + 1（新记录统一追加到末尾）
+ * @param {Array} items 记录列表
+ * @returns {number} 最大排序号 + 1
+ */
+function nextSortOrder(items) {
+    const max = (items || []).reduce((m, i) => Math.max(m, i.sortOrder || 0), 0);
+    return max + 1;
 }
 
 // 解析请求体
@@ -81,8 +138,9 @@ function sendResponse(res, statusCode, data) {
     res.writeHead(statusCode, {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS'
+        'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept, x-user-id, X-User-Id',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Expose-Headers': 'x-user-id, X-User-Id'
     });
     res.end(JSON.stringify(data));
 }
@@ -129,20 +187,20 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    // 轻流配置管理
+    // 轻流推送配置（Q-Source）
     if (pathname === '/api/qingflow/config' && method === 'GET') {
-        sendResponse(res, 200, qingflow.getConfig());
+        sendResponse(res, 200, qingflow.getPushConfig());
         return;
     }
 
     if (pathname === '/api/qingflow/config' && method === 'POST') {
         const body = await parseBody(req);
-        qingflow.setConfig(body);
-        sendResponse(res, 200, { success: true, message: '配置已更新' });
+        qingflow.setPushConfig(body);
+        sendResponse(res, 200, { success: true, message: '推送配置已更新' });
         return;
     }
 
-    // 轻流连接测试
+    // 轻流连接测试（推送）
     if (pathname === '/api/qingflow/test' && method === 'GET') {
         const result = await qingflow.testConnection();
         sendResponse(res, result.success ? 200 : 500, result);
@@ -157,15 +215,34 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // ===== 轻流同步配置（开放平台 OAuth） =====
+    if (pathname === '/api/qingflow/sync-config' && method === 'GET') {
+        sendResponse(res, 200, qingflow.getSyncConfig());
+        return;
+    }
+
+    if (pathname === '/api/qingflow/sync-config' && method === 'POST') {
+        const body = await parseBody(req);
+        qingflow.setSyncConfig(body);
+        sendResponse(res, 200, { success: true, message: '同步配置已更新' });
+        return;
+    }
+
     // Projects API
     if (pathname.startsWith('/api/projects') && method === 'GET') {
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         const projectId = pathname.match(/\/api\/projects\/([^\/]+)/)?.[1];
         if (projectId) {
+            // 项目详情仅所有者/admin 可见（强隔离：成员看不到他人项目）
+            if (!ac.canManageProject(data, userId, projectId)) {
+                sendResponse(res, 403, { error: '无权访问该项目' });
+                return;
+            }
             const tasks = data.tasks.filter(t => t.projectId === projectId || t.project_id === projectId);
             sendResponse(res, 200, { project: data.projects.find(p => p.id === projectId), tasks });
         } else {
-            sendResponse(res, 200, data.projects);
+            sendResponse(res, 200, ac.visibleProjects(data, userId));
         }
         return;
     }
@@ -174,9 +251,11 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/projects' && method === 'POST') {
         const body = await parseBody(req);
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         const project = {
             ...body,
             id: generateId(),
+            ownerId: userId || body.ownerId || null,   // 创建者自动成为所有者（项目负责制）
             status: body.status || 'active',
             archived: body.archived ? 1 : 0,
             archiveStatus: body.archiveStatus || 'none',
@@ -286,8 +365,13 @@ const server = http.createServer(async (req, res) => {
         const id = pathname.split('/').pop();
         const body = await parseBody(req);
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         const index = data.projects.findIndex(p => p.id === id);
         if (index !== -1) {
+            if (!ac.canManageProject(data, userId, id)) {
+                sendResponse(res, 403, { error: '无权编辑该项目' });
+                return;
+            }
             data.projects[index] = { ...data.projects[index], ...body, updated_at: new Date().toISOString() };
             saveData(data);
             sendResponse(res, 200, data.projects[index]);
@@ -300,19 +384,37 @@ const server = http.createServer(async (req, res) => {
     if (pathname.match(/\/api\/projects\/[\w-]+/) && method === 'DELETE') {
         const id = pathname.split('/').pop();
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         const index = data.projects.findIndex(p => p.id === id);
         if (index !== -1) {
-            // 级联删除关联任务
-            const tasksToDelete = data.tasks.filter(t => t.projectId === id || t.project_id === id);
+            if (!ac.canManageProject(data, userId, id)) {
+                sendResponse(res, 403, { error: '无权删除该项目' });
+                return;
+            }
+            // 收集自身及所有后代项目（按 parentProjectId 递归）
+            const toDelete = new Set([id]);
+            let changed = true;
+            while (changed) {
+                changed = false;
+                data.projects.forEach(p => {
+                    if (p.parentProjectId && toDelete.has(p.parentProjectId) && !toDelete.has(p.id)) {
+                        toDelete.add(p.id);
+                        changed = true;
+                    }
+                });
+            }
+            // 级联删除关联任务（含子项目）
+            const tasksToDelete = data.tasks.filter(t => toDelete.has(t.projectId) || toDelete.has(t.project_id));
             tasksToDelete.forEach(t => {
                 const taskIndex = data.tasks.findIndex(task => task.id === t.id);
                 if (taskIndex !== -1) {
                     data.tasks.splice(taskIndex, 1);
                 }
             });
-            data.projects.splice(index, 1);
+            const projectsDeleted = toDelete.size;
+            data.projects = data.projects.filter(p => !toDelete.has(p.id));
             saveData(data);
-            sendResponse(res, 200, { success: true, tasksDeleted: tasksToDelete.length });
+            sendResponse(res, 200, { success: true, projectsDeleted, tasksDeleted: tasksToDelete.length });
         } else {
             sendResponse(res, 404, { error: 'Project not found' });
         }
@@ -322,7 +424,12 @@ const server = http.createServer(async (req, res) => {
     // Tasks API
     if (pathname.match(/\/api\/projects\/[\w-]+\/tasks/) && method === 'GET') {
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         const projectId = pathname.split('/')[3];
+        if (!ac.canManageProject(data, userId, projectId)) {
+            sendResponse(res, 403, { error: '无权访问该项目任务' });
+            return;
+        }
         const tasks = data.tasks.filter(t => t.projectId === projectId || t.project_id === projectId);
         sendResponse(res, 200, tasks);
         return;
@@ -331,14 +438,20 @@ const server = http.createServer(async (req, res) => {
     // 新增：获取所有任务（修复 P0-1）
     if (pathname === '/api/tasks' && method === 'GET') {
         const data = loadData();
-        sendResponse(res, 200, data.tasks);
+        const userId = ac.getUserId(req, url);
+        sendResponse(res, 200, ac.visibleTasks(data, userId));
         return;
     }
 
     if (pathname.match(/\/api\/projects\/[\w-]+\/tasks/) && method === 'POST') {
         const body = await parseBody(req);
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         const projectId = pathname.split('/')[3];
+        if (!ac.canCreateTask(data, userId, projectId)) {
+            sendResponse(res, 403, { error: '无权在该项目创建任务' });
+            return;
+        }
         const task = {
             ...body,
             id: generateId(),
@@ -353,8 +466,8 @@ const server = http.createServer(async (req, res) => {
         saveData(data);
         sendResponse(res, 201, task);
 
-        // 异步发送轻流通知（不阻塞响应，5秒超时保护）
-        if (body.assigneeId || body.assignee) {
+        // 异步发送轻流通知（仅任务已启动才推送，未启动的 todo 任务不推送；不阻塞响应，5秒超时保护）
+        if ((body.assigneeId || body.assignee) && task.status !== 'todo') {
             qingflow.notifyTaskCreated(task).then(result => {
                 if (!result.success) {
                     console.error('[轻流通知] 任务推送失败:', result.error || result.errMsg);
@@ -370,11 +483,43 @@ const server = http.createServer(async (req, res) => {
         const id = pathname.split('/').pop();
         const body = await parseBody(req);
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         const index = data.tasks.findIndex(t => t.id === id);
         if (index !== -1) {
-            data.tasks[index] = { ...data.tasks[index], ...body, updated_at: new Date().toISOString() };
+            // 所有者可编辑；任务责任人(成员)可更新自己任务的进度汇报
+            if (!ac.canManageTask(data, userId, id) && !ac.taskAssigneeIncludes(data.tasks[index], userId)) {
+                sendResponse(res, 403, { error: '无权修改该任务' });
+                return;
+            }
+            const oldTask = { ...data.tasks[index] };
+            const oldStatus = oldTask.status || 'todo';
+            const newStatus = body.status || oldStatus;
+            data.tasks[index] = { ...data.tasks[index], ...body, status: newStatus, updated_at: new Date().toISOString() };
             saveData(data);
             sendResponse(res, 200, data.tasks[index]);
+
+            // 状态联动：任务从「待启动」变为「进行中」时，自动将所属项目同步为「进行中」
+            if (oldStatus === 'todo' && newStatus === 'in_progress') {
+              const pid = data.tasks[index].projectId || data.tasks[index].project_id;
+              const pIndex = data.projects.findIndex(p => p.id === pid);
+              if (pIndex !== -1 && data.projects[pIndex].status !== 'in_progress') {
+                data.projects[pIndex].status = 'in_progress';
+                data.projects[pIndex].updated_at = new Date().toISOString();
+                saveData(data);
+              }
+            }
+
+            // 任务启动推送：仅当任务从未启动(todo)变为已启动状态时，推送到轻流
+            const launched = oldStatus === 'todo' && newStatus !== 'todo';
+            if (launched && (data.tasks[index].assigneeId || data.tasks[index].assignee)) {
+                qingflow.notifyTaskCreated(data.tasks[index]).then(result => {
+                    if (!result.success) {
+                        console.error('[轻流通知] 任务启动推送失败:', result.error || result.errMsg);
+                    }
+                }).catch(err => {
+                    console.error('[轻流通知] 任务启动推送异常:', err.message);
+                });
+            }
         } else {
             sendResponse(res, 404, { error: 'Task not found' });
         }
@@ -384,16 +529,23 @@ const server = http.createServer(async (req, res) => {
     // Todos API
     if (pathname === '/api/todos' && method === 'GET') {
         const data = loadData();
-        sendResponse(res, 200, data.todos);
+        const userId = ac.getUserId(req, url);
+        sendResponse(res, 200, ac.visibleTodos(data, userId));
         return;
     }
 
     if (pathname === '/api/todos' && method === 'POST') {
         const body = await parseBody(req);
         const data = loadData();
+        const userId = ac.getUserId(req, url);
+        if (!ac.canCreateTodo(data, userId, body)) {
+            sendResponse(res, 403, { error: '无权创建该待办（成员仅可在自己负责的任务下添加）' });
+            return;
+        }
         const todo = {
             ...body,
             id: generateId(),
+            ownerId: userId || body.ownerId || null,
             completed: body.completed || 0,
             priority: body.priority || 'medium',
             remind_days: body.remind_days || 3,
@@ -422,8 +574,13 @@ const server = http.createServer(async (req, res) => {
         const id = pathname.split('/').pop();
         const body = await parseBody(req);
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         const index = data.todos.findIndex(t => t.id === id);
         if (index !== -1) {
+            if (!ac.canManageTodo(data, userId, id)) {
+                sendResponse(res, 403, { error: '无权编辑该待办' });
+                return;
+            }
             data.todos[index] = { ...data.todos[index], ...body, updated_at: new Date().toISOString() };
             saveData(data);
             sendResponse(res, 200, data.todos[index]);
@@ -436,8 +593,13 @@ const server = http.createServer(async (req, res) => {
     if (pathname.match(/\/api\/todos\/[\w-]+/) && method === 'DELETE') {
         const id = pathname.split('/').pop();
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         const index = data.todos.findIndex(t => t.id === id);
         if (index !== -1) {
+            if (!ac.canManageTodo(data, userId, id)) {
+                sendResponse(res, 403, { error: '无权删除该待办' });
+                return;
+            }
             data.todos.splice(index, 1);
             saveData(data);
             sendResponse(res, 200, { success: true });
@@ -447,7 +609,248 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    // Members API
+    // ===== 组织架构（部门）API =====
+    if (pathname === '/api/departments' && method === 'GET') {
+        const data = loadData();
+        const depts = data.departments || [];
+        const map = {};
+        depts.forEach(d => map[d.id] = { ...d, children: [] });
+        const tree = [];
+        depts.forEach(d => {
+            if (d.parentId && map[d.parentId]) {
+                map[d.parentId].children.push(map[d.id]);
+            } else {
+                tree.push(map[d.id]);
+            }
+        });
+        sendResponse(res, 200, tree);
+        return;
+    }
+
+    if (pathname === '/api/departments' && method === 'POST') {
+        const body = await parseBody(req);
+        const data = loadData();
+        if (!data.departments) data.departments = [];
+        const dept = {
+            ...body,
+            id: body.id || `dept_${Date.now()}`,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+        };
+        data.departments.push(dept);
+        saveData(data);
+        sendResponse(res, 201, dept);
+        return;
+    }
+
+    if (pathname.match(/^\/api\/departments\/[\w-]+$/) && method === 'PUT') {
+        const id = pathname.split('/').pop();
+        const body = await parseBody(req);
+        const data = loadData();
+        if (!data.departments) data.departments = [];
+        const index = data.departments.findIndex(d => d.id === id);
+        if (index !== -1) {
+            data.departments[index] = { ...data.departments[index], ...body, updated_at: new Date().toISOString() };
+            saveData(data);
+            sendResponse(res, 200, data.departments[index]);
+        } else {
+            sendResponse(res, 404, { error: 'Department not found' });
+        }
+        return;
+    }
+
+    if (pathname.match(/^\/api\/departments\/[\w-]+$/) && method === 'DELETE') {
+        const id = pathname.split('/').pop();
+        const data = loadData();
+        if (!data.departments) data.departments = [];
+        const toDelete = new Set([id]);
+        let changed = true;
+        while (changed) {
+            changed = false;
+            data.departments.forEach(d => {
+                if (d.parentId && toDelete.has(d.parentId) && !toDelete.has(d.id)) {
+                    toDelete.add(d.id);
+                    changed = true;
+                }
+            });
+        }
+        const before = data.departments.length;
+        data.departments = data.departments.filter(d => !toDelete.has(d.id));
+        saveData(data);
+        sendResponse(res, 200, { success: true, deleted: before - data.departments.length });
+        return;
+    }
+
+    // ===== 轻流组织架构同步 =====
+    if (pathname === '/api/organization/sync' && method === 'POST') {
+        const data = loadData();
+        try {
+            const result = await qingflow.syncOrganization(data);
+            if (result.success) {
+                saveData(data);
+                sendResponse(res, 200, { success: true, message: '同步完成', ...result.results });
+            } else {
+                sendResponse(res, 400, { success: false, error: result.error });
+            }
+        } catch (err) {
+            sendResponse(res, 500, { success: false, error: err.message });
+        }
+        return;
+    }
+
+    if (pathname === '/api/organization/qingflow-departments' && method === 'GET') {
+        try {
+            const result = await qingflow.getDepartments();
+            if (result.success) {
+                sendResponse(res, 200, { success: true, departments: result.departments });
+            } else {
+                sendResponse(res, 400, { success: false, error: result.error });
+            }
+        } catch (err) {
+            sendResponse(res, 500, { success: false, error: err.message });
+        }
+        return;
+    }
+
+    if (pathname === '/api/organization/qingflow-users' && method === 'GET') {
+        try {
+            const result = await qingflow.getUsers();
+            if (result.success) {
+                sendResponse(res, 200, { success: true, users: result.users });
+            } else {
+                sendResponse(res, 400, { success: false, error: result.error });
+            }
+        } catch (err) {
+            sendResponse(res, 500, { success: false, error: err.message });
+        }
+        return;
+    }
+
+    // ===== Excel 导入合并组织架构和成员 =====
+    // 前端解析 Excel 后提交 JSON: { departments: [...], members: [...] }
+    // departments: [{ id, name, parentId }]  parentId 允许为父部门 name（前端已解析成 id）
+    // members: [{ name, email, phone, departmentId }]
+    if (pathname === '/api/organization/import' && method === 'POST') {
+        const body = await parseBody(req);
+        const data = loadData();
+        if (!data.departments) data.departments = [];
+        if (!data.members) data.members = [];
+        const results = { syncedDepartments: 0, syncedMembers: 0, updatedMembers: 0, skipped: 0 };
+
+        // ---- 1. 合并部门 ----
+        if (Array.isArray(body.departments)) {
+            const existingIds = new Set(data.departments.map(d => d.id));
+            // 第一轮：先建立 id -> 部门 的映射（含导入的父部门 name -> id 解析）
+            const idToName = {};
+            data.departments.forEach(d => { idToName[d.id] = d.name; });
+            const nameToId = {};
+            data.departments.forEach(d => { if (d.name) nameToId[d.name] = d.id; });
+            body.departments.forEach(d => { if (d.name) nameToId[d.name] = d.id; });
+            // 收集导入部门自身的 name->id（用于父子引用）
+            const importedById = {};
+            body.departments.forEach(d => { importedById[d.id] = d; });
+
+            const usedIds = new Set(existingIds);
+            for (const d of body.departments) {
+                if (!d.name || !d.name.trim()) { results.skipped++; continue; }
+                // 解析 parentId：可能是 id、name 或缺失
+                let parentId = null;
+                if (d.parentId != null && d.parentId !== '' && d.parentId !== '无' && d.parentId !== '-') {
+                    parentId = String(d.parentId);
+                    // 如果 parentId 是父部门名称，先尝试用 name->id 映射
+                    if (!usedIds.has(parentId) && nameToId[parentId]) {
+                        parentId = nameToId[parentId];
+                    }
+                }
+                // id 冲突处理：导入的 id 若已存在则更新，否则用 name 匹配更新，再否则新增
+                if (usedIds.has(d.id)) {
+                    const idx = data.departments.findIndex(x => x.id === d.id);
+                    if (idx !== -1) data.departments[idx] = { ...data.departments[idx], name: d.name, parentId };
+                    continue;
+                }
+                const byName = data.departments.find(x => x.name === d.name);
+                if (byName) {
+                    const idx = data.departments.findIndex(x => x.id === byName.id);
+                    if (idx !== -1) data.departments[idx] = { ...data.departments[idx], parentId: parentId || data.departments[idx].parentId, updated_at: new Date().toISOString() };
+                    continue;
+                }
+                const newDept = {
+                    id: d.id || `dept_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                    name: d.name.trim(),
+                    parentId,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                };
+                data.departments.push(newDept);
+                usedIds.add(newDept.id);
+                nameToId[newDept.name] = newDept.id;
+                results.syncedDepartments++;
+            }
+        }
+
+        // ---- 2. 合并成员 ----
+        if (Array.isArray(body.members)) {
+            const existingEmails = new Set(data.members.map(m => m.email).filter(Boolean));
+            const deptNameToId = {};
+            data.departments.forEach(d => { if (d.name) deptNameToId[d.name] = d.id; });
+            const usedMemberIds = new Set(data.members.map(m => m.id).filter(Boolean));
+
+            for (const u of body.members) {
+                const name = (u.name || u.username || u.userName || '').trim();
+                const email = (u.email || u.mail || '').trim();
+                if (!name && !email) { results.skipped++; continue; }
+                // 解析部门：departmentId 可能是 id 或部门名
+                let deptId = u.departmentId || u.deptId || u.department || u.dept_name || null;
+                if (deptId && !data.departments.find(d => d.id === deptId)) {
+                    deptId = deptNameToId[String(deptId)] || null;
+                }
+                // 按 email 匹配更新，否则按 name 匹配，否则新增
+                let existing = null;
+                if (email && existingEmails.has(email)) {
+                    existing = data.members.find(m => m.email === email);
+                }
+                if (!existing && name) {
+                    existing = data.members.find(m => m.name === name);
+                }
+                if (existing) {
+                    const idx = data.members.findIndex(m => m.id === existing.id);
+                    data.members[idx] = {
+                        ...data.members[idx],
+                        name: name || data.members[idx].name,
+                        email: email || data.members[idx].email,
+                        phone: u.phone || u.mobile || data.members[idx].phone || '',
+                        departmentId: deptId || data.members[idx].departmentId,
+                        source: 'excel',
+                        updated_at: new Date().toISOString()
+                    };
+                    results.updatedMembers++;
+                } else {
+                    const newMember = {
+                        id: u.id || `mem_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                        name: name || email.split('@')[0] || '未命名',
+                        email,
+                        password: email.split('@')[0] + '123', // 默认密码：邮箱@前部分+123
+                        phone: u.phone || u.mobile || '',
+                        departmentId: deptId || null,
+                        role: u.role || 'member',
+                        avatarColor: u.avatarColor || '#3b82f6',
+                        source: 'excel',
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString()
+                    };
+                    data.members.push(newMember);
+                    if (email) existingEmails.add(email);
+                    results.syncedMembers++;
+                }
+            }
+        }
+
+        saveData(data);
+        sendResponse(res, 200, { success: true, message: 'Excel 导入完成', ...results });
+        return;
+    }
+
+    // Members API (legacy simple)
     if (pathname === '/api/members' && method === 'GET') {
         const data = loadData();
         sendResponse(res, 200, data.members);
@@ -490,6 +893,17 @@ const server = http.createServer(async (req, res) => {
         data.notifications.push(notification);
         saveData(data);
         sendResponse(res, 201, notification);
+
+        // 逾期/催办通知：异步推送到轻流 Q-Source（不阻塞响应）
+        if (body.type === 'overdue' || body.type === 'escalation') {
+            qingflow.notifyOverdue(notification)
+                .then((result) => {
+                    if (result && !result.success) {
+                        console.warn('[轻流推送] 逾期通知推送失败:', result.error || result.errMsg);
+                    }
+                })
+                .catch((err) => console.error('[轻流推送] 逾期通知推送异常:', err.message));
+        }
         return;
     }
 
@@ -497,8 +911,13 @@ const server = http.createServer(async (req, res) => {
     if (pathname.match(/^\/api\/tasks\/[\w-]+$/) && method === 'DELETE') {
         const id = pathname.split('/').pop();
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         const index = data.tasks.findIndex(t => t.id === id);
         if (index !== -1) {
+            if (!ac.canManageTask(data, userId, id)) {
+                sendResponse(res, 403, { error: '无权删除该任务' });
+                return;
+            }
             data.tasks.splice(index, 1);
             saveData(data);
             sendResponse(res, 200, { success: true });
@@ -599,6 +1018,17 @@ const server = http.createServer(async (req, res) => {
         data.notifications.push(notification);
         saveData(data);
         sendResponse(res, 201, notification);
+
+        // 逾期/催办通知：异步推送到轻流 Q-Source（不阻塞响应）
+        if (body.type === 'overdue' || body.type === 'escalation') {
+            qingflow.notifyOverdue(notification)
+                .then((result) => {
+                    if (result && !result.success) {
+                        console.warn('[轻流推送] 逾期通知推送失败:', result.error || result.errMsg);
+                    }
+                })
+                .catch((err) => console.error('[轻流推送] 逾期通知推送异常:', err.message));
+        }
         return;
     }
 
@@ -796,13 +1226,19 @@ const server = http.createServer(async (req, res) => {
     // ==================== Milestones API ====================
     if (pathname === '/api/milestones' && method === 'GET') {
         const data = loadData();
-        sendResponse(res, 200, data.milestones || []);
+        const userId = ac.getUserId(req, url);
+        sendResponse(res, 200, ac.visibleMilestones(data, userId));
         return;
     }
 
     if (pathname === '/api/milestones' && method === 'POST') {
         const body = await parseBody(req);
         const data = loadData();
+        const userId = ac.getUserId(req, url);
+        if (!ac.canManageProject(data, userId, body.projectId)) {
+            sendResponse(res, 403, { error: '无权在该项目创建里程碑' });
+            return;
+        }
         if (!data.milestones) data.milestones = [];
         const milestone = {
             ...body,
@@ -820,9 +1256,14 @@ const server = http.createServer(async (req, res) => {
         const id = pathname.split('/').pop();
         const body = await parseBody(req);
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         if (!data.milestones) data.milestones = [];
         const index = data.milestones.findIndex(m => m.id === id);
         if (index !== -1) {
+            if (!ac.canManageMilestone(data, userId, id)) {
+                sendResponse(res, 403, { error: '无权编辑该里程碑' });
+                return;
+            }
             data.milestones[index] = { ...data.milestones[index], ...body, updated_at: new Date().toISOString() };
             saveData(data);
             sendResponse(res, 200, data.milestones[index]);
@@ -835,9 +1276,14 @@ const server = http.createServer(async (req, res) => {
     if (pathname.match(/^\/api\/milestones\/[\w-]+$/) && method === 'DELETE') {
         const id = pathname.split('/').pop();
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         if (!data.milestones) data.milestones = [];
         const index = data.milestones.findIndex(m => m.id === id);
         if (index !== -1) {
+            if (!ac.canManageMilestone(data, userId, id)) {
+                sendResponse(res, 403, { error: '无权删除该里程碑' });
+                return;
+            }
             data.milestones.splice(index, 1);
             saveData(data);
             sendResponse(res, 200, { success: true });
@@ -850,17 +1296,24 @@ const server = http.createServer(async (req, res) => {
     // ==================== Documents API ====================
     if (pathname === '/api/documents' && method === 'GET') {
         const data = loadData();
-        sendResponse(res, 200, data.documents || []);
+        const userId = ac.getUserId(req, url);
+        sendResponse(res, 200, ac.visibleDocuments(data, userId));
         return;
     }
 
     if (pathname === '/api/documents' && method === 'POST') {
         const body = await parseBody(req);
         const data = loadData();
+        const userId = ac.getUserId(req, url);
+        if (!ac.canCreateDocument(data, userId, body)) {
+            sendResponse(res, 403, { error: '无权在该项目创建文档' });
+            return;
+        }
         if (!data.documents) data.documents = [];
         const doc = {
             ...body,
             id: body.id || generateId(),
+            ownerId: userId || body.ownerId || null,
             created_at: body.created_at || new Date().toISOString(),
             updated_at: new Date().toISOString()
         };
@@ -874,9 +1327,14 @@ const server = http.createServer(async (req, res) => {
         const id = pathname.split('/').pop();
         const body = await parseBody(req);
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         if (!data.documents) data.documents = [];
         const index = data.documents.findIndex(d => d.id === id);
         if (index !== -1) {
+            if (!ac.canManageDocument(data, userId, id)) {
+                sendResponse(res, 403, { error: '无权编辑该文档' });
+                return;
+            }
             data.documents[index] = { ...data.documents[index], ...body, updated_at: new Date().toISOString() };
             saveData(data);
             sendResponse(res, 200, data.documents[index]);
@@ -889,14 +1347,143 @@ const server = http.createServer(async (req, res) => {
     if (pathname.match(/^\/api\/documents\/[\w-]+$/) && method === 'DELETE') {
         const id = pathname.split('/').pop();
         const data = loadData();
+        const userId = ac.getUserId(req, url);
         if (!data.documents) data.documents = [];
         const index = data.documents.findIndex(d => d.id === id);
         if (index !== -1) {
+            if (!ac.canManageDocument(data, userId, id)) {
+                sendResponse(res, 403, { error: '无权删除该文档' });
+                return;
+            }
             data.documents.splice(index, 1);
             saveData(data);
             sendResponse(res, 200, { success: true });
         } else {
             sendResponse(res, 404, { error: 'Document not found' });
+        }
+        return;
+    }
+
+    // ==================== 项目类型 API (Project Types) ====================
+    if (pathname === '/api/project-types' && method === 'GET') {
+        const data = loadData();
+        sendResponse(res, 200, data.projectTypes || []);
+        return;
+    }
+
+    if (pathname === '/api/project-types' && method === 'POST') {
+        const body = await parseBody(req);
+        const data = loadData();
+        if (!data.projectTypes) data.projectTypes = [];
+        // 新记录统一排在最下面：排序号取当前最大 + 1，不做顺延
+        const pt = {
+            ...body,
+            id: body.id || generateId(),
+            sortOrder: nextSortOrder(data.projectTypes),
+            created_at: new Date().toISOString()
+        };
+        data.projectTypes.push(pt);
+        saveData(data);
+        sendResponse(res, 201, pt);
+        return;
+    }
+
+    if (pathname.match(/^\/api\/project-types\/[\w-]+$/) && method === 'PUT') {
+        const id = pathname.split('/').pop();
+        const body = await parseBody(req);
+        const data = loadData();
+        if (!data.projectTypes) data.projectTypes = [];
+        const index = data.projectTypes.findIndex(t => t.id === id);
+        if (index !== -1) {
+            // 编辑项目类型：不调整排序号，保留原位置
+            const updated = { ...data.projectTypes[index], ...body, sortOrder: data.projectTypes[index].sortOrder, updated_at: new Date().toISOString() };
+            data.projectTypes[index] = updated;
+            saveData(data);
+            sendResponse(res, 200, updated);
+        } else {
+            sendResponse(res, 404, { error: 'Project type not found' });
+        }
+        return;
+    }
+
+    if (pathname.match(/^\/api\/project-types\/[\w-]+$/) && method === 'DELETE') {
+        const id = pathname.split('/').pop();
+        const data = loadData();
+        if (!data.projectTypes) data.projectTypes = [];
+        const index = data.projectTypes.findIndex(t => t.id === id);
+        if (index !== -1) {
+            data.projectTypes.splice(index, 1);
+            // 同时删除关联的项目阶段
+            if (data.projectStages) {
+                data.projectStages = data.projectStages.filter(s => s.projectTypeId !== id);
+            }
+            saveData(data);
+            sendResponse(res, 200, { success: true });
+        } else {
+            sendResponse(res, 404, { error: 'Project type not found' });
+        }
+        return;
+    }
+
+    // ==================== 项目阶段 API (Project Stages) ====================
+    if (pathname === '/api/project-stages' && method === 'GET') {
+        const data = loadData();
+        const projectTypeId = url.searchParams.get('projectTypeId');
+        let stages = data.projectStages || [];
+        if (projectTypeId) {
+            stages = stages.filter(s => s.projectTypeId === projectTypeId);
+        }
+        sendResponse(res, 200, stages);
+        return;
+    }
+
+    if (pathname === '/api/project-stages' && method === 'POST') {
+        const body = await parseBody(req);
+        const data = loadData();
+        if (!data.projectStages) data.projectStages = [];
+        // 新记录统一排在该类型最下面：排序号取该类型当前最大 + 1，不做顺延
+        const typeStages = data.projectStages.filter(s => s.projectTypeId === body.projectTypeId);
+        const stage = {
+            ...body,
+            id: body.id || generateId(),
+            sortOrder: nextSortOrder(typeStages),
+            created_at: new Date().toISOString()
+        };
+        data.projectStages.push(stage);
+        saveData(data);
+        sendResponse(res, 201, stage);
+        return;
+    }
+
+    if (pathname.match(/^\/api\/project-stages\/[\w-]+$/) && method === 'PUT') {
+        const id = pathname.split('/').pop();
+        const body = await parseBody(req);
+        const data = loadData();
+        if (!data.projectStages) data.projectStages = [];
+        const index = data.projectStages.findIndex(s => s.id === id);
+        if (index !== -1) {
+            // 编辑项目阶段：不调整排序号，保留原位置
+            const updated = { ...data.projectStages[index], ...body, sortOrder: data.projectStages[index].sortOrder, updated_at: new Date().toISOString() };
+            data.projectStages[index] = updated;
+            saveData(data);
+            sendResponse(res, 200, updated);
+        } else {
+            sendResponse(res, 404, { error: 'Project stage not found' });
+        }
+        return;
+    }
+
+    if (pathname.match(/^\/api\/project-stages\/[\w-]+$/) && method === 'DELETE') {
+        const id = pathname.split('/').pop();
+        const data = loadData();
+        if (!data.projectStages) data.projectStages = [];
+        const index = data.projectStages.findIndex(s => s.id === id);
+        if (index !== -1) {
+            data.projectStages.splice(index, 1);
+            saveData(data);
+            sendResponse(res, 200, { success: true });
+        } else {
+            sendResponse(res, 404, { error: 'Project stage not found' });
         }
         return;
     }
@@ -944,6 +1531,8 @@ server.listen(PORT, () => {
     console.log('  GET/POST/PUT/DELETE /api/resources   - 资源 CRUD');
     console.log('  GET/POST/PUT/DELETE /api/milestones  - 里程碑 CRUD');
     console.log('  GET/POST/PUT/DELETE /api/documents   - 文档 CRUD');
+    console.log('  GET/POST/PUT/DELETE /api/project-types - 项目类型字典');
+    console.log('  GET/POST/PUT/DELETE /api/project-stages - 项目阶段字典');
     console.log('='.repeat(50));
 });
 

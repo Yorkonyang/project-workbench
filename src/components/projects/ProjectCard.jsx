@@ -23,6 +23,7 @@ import { useNotificationStore } from '@/store/useNotificationStore';
 import { cn } from '@/lib/utils';
 
 const STATUS_CONFIG = {
+  planned: { label: '待启动', color: 'bg-slate-100 text-slate-600' },
   in_progress: { label: '进行中', color: 'bg-blue-100 text-blue-700' },
   paused: { label: '暂停', color: 'bg-amber-100 text-amber-700' },
   completed: { label: '已完成', color: 'bg-green-100 text-green-700' },
@@ -66,6 +67,10 @@ export default function ProjectCard({ project, onEdit, onArchive, onRestore, onD
 
   const projectTasks = tasks.filter((t) => t.projectId === project.id);
   const doneTasks = projectTasks.filter((t) => t.status === 'done').length;
+  const allProjects = useProjectStore((s) => s.projects);
+  const parentProject = project.parentProjectId
+    ? allProjects.find((p) => p.id === project.parentProjectId)
+    : null;
   const daysUntilEnd = project.endDate
     ? differenceInDays(parseISO(project.endDate), new Date())
     : null;
@@ -78,6 +83,7 @@ export default function ProjectCard({ project, onEdit, onArchive, onRestore, onD
   const isRequested = project.archiveStatus === 'requested';
   const isRejected = project.archiveStatus === 'rejected';
   const isAdmin = currentUser?.role === 'admin';
+  const isOwner = currentUserId === project.ownerId || currentUserId === project.manager;
 
   const handleRestore = () => {
     restoreProject(project.id);
@@ -177,12 +183,16 @@ export default function ProjectCard({ project, onEdit, onArchive, onRestore, onD
                 )}
               </div>
               <h3 className="font-semibold text-slate-800 truncate mt-0.5">{project.name}</h3>
+              {parentProject && (
+                <p className="text-[11px] text-primary-600 mt-0.5">隶属：{parentProject.name}</p>
+              )}
               <p className="text-xs text-slate-500 mt-1 line-clamp-2">{project.description}</p>
             </div>
           </div>
 
           {/* Actions */}
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {(isAdmin || isOwner) && (
             <button
               onClick={() => onEdit?.(project)}
               className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-smooth"
@@ -190,6 +200,7 @@ export default function ProjectCard({ project, onEdit, onArchive, onRestore, onD
             >
               <Pencil className="w-3.5 h-3.5" />
             </button>
+            )}
 
             {/* 申请归档按钮（仅进行中项目可点击） */}
             {showArchive && !project.archived && !isRequested && (
@@ -234,8 +245,8 @@ export default function ProjectCard({ project, onEdit, onArchive, onRestore, onD
               </button>
             )}
 
-            {/* 删除按钮（仅管理员可见） */}
-            {isAdmin && (
+            {/* 删除按钮（管理员或项目所有者可见） */}
+            {(isAdmin || isOwner) && (
               <button
                 onClick={() => setShowDeleteConfirm(true)}
                 className="p-1.5 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-600 transition-smooth"

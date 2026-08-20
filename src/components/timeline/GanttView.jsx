@@ -1,8 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, Fragment, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { format, addDays, isSameDay, parseISO, startOfMonth, endOfMonth } from 'date-fns';
+import { Flag, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { isMilestoneDone } from '@/config/theme';
 
 export default function GanttView({ tasks, milestones, projects }) {
+  const navigate = useNavigate();
   // Merge tasks and milestones with unified date fields
   // Filter out tasks from archived projects
   const activeProjectIds = new Set(
@@ -73,6 +77,12 @@ export default function GanttView({ tasks, milestones, projects }) {
   const totalWidth = totalDays * dayWidth;
   const rowHeight = 64; // Height for individual task rows
   const summaryRowHeight = 40; // Height for summary row
+
+  // 进度线视觉常量（相对原 height:2 增粗 5 倍 → 10）
+  const LINE_W = 10;                 // 线宽（原 2 的 5 倍）
+  const PLAN_TOP = 24;              // 计划线在上（px，距行顶）
+  const ACTUAL_TOP = 40;            // 实际线在下（px，距行顶）
+  const ACTUAL_CENTER = ACTUAL_TOP + LINE_W / 2; // 实际线纵向中心（圆球/竖线/方块对齐基准）
 
   // Generate days with proper labels for header
   const days = useMemo(() => {
@@ -149,6 +159,21 @@ export default function GanttView({ tasks, milestones, projects }) {
 
   const todayPosition = getPosition(todayISO);
 
+  // 打开页面时把“今天”滚动到可视区中央（任务标签列为 w-48 = 192px，需从可视宽度中扣除）
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const LABEL_W = 192;
+    const raf = requestAnimationFrame(() => {
+      const visibleW = Math.max(0, el.clientWidth - LABEL_W);
+      const center = todayPosition + dayWidth / 2 - visibleW / 2;
+      const max = el.scrollWidth - el.clientWidth;
+      el.scrollTo({ left: Math.max(0, Math.min(center, max)), behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [todayPosition, chartStartDate, totalDays, dayWidth]);
+
   // Project color theme mapping (cycles through themes)
   const projectThemeColors = [
     { nameBg: 'bg-slate-400', nameText: 'text-white', rowEven: 'bg-white', rowOdd: 'bg-slate-50', accent: 'border-slate-200' },
@@ -164,20 +189,36 @@ export default function GanttView({ tasks, milestones, projects }) {
       {/* Header */}
       <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
         <h3 className="font-semibold text-slate-800 text-sm">项目甘特图</h3>
-        <div className="flex items-center gap-4 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="w-12 h-1 bg-blue-400 rounded"></span>
+        <div className="flex items-center gap-3 text-xs flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <span className="w-10 h-2.5 bg-blue-400 rounded"></span>
             <span className="text-slate-500">计划时间</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="w-12 h-1 bg-green-500 rounded"></span>
+          <div className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded-full bg-green-500"></span>
+            <span className="text-slate-500">启动点</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-10 h-2.5 bg-green-500 rounded"></span>
             <span className="text-slate-500">实际进度</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-0.5 h-4 bg-green-500"></span>
+            <span className="text-slate-500">汇报节点</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-3.5 h-3.5 bg-green-500 rounded-sm"></span>
+            <span className="text-slate-500">已完成</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-10 h-2.5 bg-red-500 rounded"></span>
+            <span className="text-slate-500">超期</span>
           </div>
         </div>
       </div>
 
       {/* Gantt Chart */}
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto gantt-scroll" ref={scrollRef}>
         <div className="min-w-max">
           {/* Date Header - Month labels */}
           <div className="flex border-b border-slate-100 sticky top-0 bg-white z-20">
@@ -267,21 +308,20 @@ export default function GanttView({ tasks, milestones, projects }) {
 
                 {/* Individual Task Rows */}
                 {items.map((item, idx) => {
+                  const isMilestone = item.type === 'milestone';
                   const planLeft = getPosition(item.startDate);
                   const planWidth = getDuration(item.startDate, item.dueDate);
                   const actualStart = item.actualStartDate || item.startDate;
-                  // Use latest progress report date as actual end
-                  let actualEnd = item.actualEndDate;
-                  if (!actualEnd && item.progressReports && item.progressReports.length > 0) {
-                    const sortedReports = [...item.progressReports].sort((a, b) =>
-                      new Date(b.date) - new Date(a.date)
-                    );
-                    actualEnd = sortedReports[0]?.date || todayISO;
-                  } else if (!actualEnd && (item.status === 'in_progress' || item.status === 'review')) {
-                    actualEnd = todayISO;
-                  }
+                  const dueRight = getPosition(item.dueDate) + dayWidth; // 计划线右边界
+                  // 任务是否已启动（进行中 / 评审中 / 已完成）
+                  const started =
+                    actualStart && ['in_progress', 'review', 'done'].includes(item.status);
+                  const isDone = item.status === 'done';
+                  // 进度汇报按日期升序排列
+                  const reportsSorted = (item.progressReports || [])
+                    .slice()
+                    .sort((a, b) => new Date(a.date) - new Date(b.date));
                   const actualLeft = getPosition(actualStart);
-                  const actualWidth = actualEnd ? getDuration(actualStart, actualEnd) : 0;
 
                   return (
                     <div
@@ -295,7 +335,17 @@ export default function GanttView({ tasks, milestones, projects }) {
                       {/* Task Info - sticky left column */}
                       <div className={cn("w-48 shrink-0 px-4 py-2 border-r flex items-center sticky left-0 z-30", theme.rowEven)}>
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-slate-700 truncate">
+                          <p className="text-xs font-medium text-slate-700 truncate flex items-center gap-1.5">
+                            {item.type === 'milestone' && (
+                              <Flag
+                                className="w-3.5 h-3.5 shrink-0"
+                                style={{
+                                  color: isMilestoneDone(item) ? '#10b981' : '#8b5cf6',
+                                  fill: isMilestoneDone(item) ? '#10b981' : 'none',
+                                  strokeWidth: isMilestoneDone(item) ? 0 : 2,
+                                }}
+                              />
+                            )}
                             {item.title}
                           </p>
                           <p className="text-[10px] text-slate-400 font-mono">
@@ -328,61 +378,155 @@ export default function GanttView({ tasks, milestones, projects }) {
                           style={{ left: todayPosition + dayWidth / 2 }}
                         />
 
-                        {/* Plan Bar (Light Blue) - centered in row */}
-                        <div
-                          className="absolute"
-                          style={{
-                            left: planLeft,
-                            top: '30%',
-                            width: Math.max(planWidth, 4),
-                            height: 2,
-                          }}
-                        >
-                          <div className="h-full bg-blue-400 rounded opacity-70" />
-                        </div>
-
-                        {/* Actual Progress Bar (Green) - only show if task has started */}
-                        {(item.status === 'in_progress' || item.status === 'review' || item.status === 'done') && actualWidth > 0 ? (
+                        {/* Plan Bar (Light Blue) - 向下增粗 5 倍；里程碑不显示计划线 */}
+                        {!isMilestone && (
                           <div
-                            className="absolute"
+                            className="absolute cursor-pointer hover:opacity-100 transition-opacity"
                             style={{
-                              left: actualLeft,
-                              top: '60%',
-                              width: Math.max(actualWidth, 4),
-                              height: 2,
+                              left: planLeft,
+                              top: PLAN_TOP,
+                              width: Math.max(planWidth, LINE_W),
+                              height: LINE_W,
                             }}
+                            onClick={() => navigate(`/tasks?taskId=${item.id}`)}
+                            title="点击查看任务详情"
                           >
-                            {/* Progress line with rounded left */}
-                            <div className="h-full bg-green-500 rounded-l" />
-                            {/* End triangle */}
-                            <div
-                              className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2"
-                              style={{
-                                width: 0,
-                                height: 0,
-                                borderLeft: '5px solid transparent',
-                                borderRight: '5px solid transparent',
-                                borderBottom: '7px solid #22c55e',
-                              }}
-                            />
+                            <div className="h-full bg-blue-400 rounded opacity-70" />
                           </div>
-                        ) : null}
+                        )}
 
-                        {/* Start triangle - only if task has been started */}
-                        {(item.status === 'in_progress' || item.status === 'review' || item.status === 'done') && actualLeft > planLeft ? (
+                        {/* 实际进度线（核心逻辑）：仅任务且已启动 */}
+                        {!isMilestone && started && (
+                          <Fragment>
+                            {/* 启动点：绿色实心小圆球（起点通用标识，含已完成任务）*/}
+                            <div
+                              className="absolute rounded-full bg-green-500 z-20 cursor-pointer hover:scale-110 transition-transform"
+                              style={{
+                                left: actualLeft - (LINE_W + 2) / 2,
+                                top: ACTUAL_CENTER - (LINE_W + 2) / 2,
+                                width: LINE_W + 2,
+                                height: LINE_W + 2,
+                              }}
+                              title="任务已启动（起点）- 点击查看任务详情"
+                              onClick={() => navigate(`/tasks?taskId=${item.id}`)}
+                            />
+
+                            {/* 每次进度汇报：一段线 + 右端竖线（末段且完成 → 绿色实心方块）*/}
+                            {reportsSorted.map((rep, i) => {
+                              const segLeft =
+                                i === 0 ? actualLeft : getPosition(reportsSorted[i - 1].date) + dayWidth;
+                              const segRight = getPosition(rep.date) + dayWidth;
+                              if (segRight <= segLeft) return null;
+                              const isLast = i === reportsSorted.length - 1;
+                              const overPlan = segRight > dueRight;
+                              const endColor = overPlan ? '#ef4444' : '#22c55e';
+                              // 绿色部分（未超出计划线）
+                              const greenRight = Math.min(segRight, dueRight);
+                              const hasGreen = greenRight > segLeft;
+                              // 红色部分（超出计划线）
+                              const redLeft = Math.max(segLeft, dueRight);
+                              const hasRed = segRight > dueRight && redLeft < segRight;
+                              return (
+                                <Fragment key={rep.id || i}>
+                              {hasGreen && (
+                                <div
+                                  className="absolute cursor-pointer hover:opacity-100 transition-opacity"
+                                  style={{
+                                    left: segLeft,
+                                    top: ACTUAL_TOP,
+                                    width: greenRight - segLeft,
+                                    height: LINE_W,
+                                    background: '#22c55e',
+                                    borderRadius: 2,
+                                  }}
+                                  onClick={() => navigate(`/tasks?taskId=${item.id}`)}
+                                  title="点击查看任务详情"
+                                />
+                              )}
+                              {hasRed && (
+                                <div
+                                  className="absolute cursor-pointer hover:opacity-100 transition-opacity"
+                                  style={{
+                                    left: redLeft,
+                                    top: ACTUAL_TOP,
+                                    width: segRight - redLeft,
+                                    height: LINE_W,
+                                    background: '#ef4444',
+                                    borderRadius: 2,
+                                  }}
+                                  onClick={() => navigate(`/tasks?taskId=${item.id}`)}
+                                  title="点击查看任务详情"
+                                />
+                              )}
+                                  {isLast && isDone ? (
+                                    <div
+                                      className="absolute bg-green-500 z-20"
+                                      style={{
+                                        left: segRight - LINE_W,
+                                        top: ACTUAL_CENTER - LINE_W,
+                                        width: LINE_W * 2,
+                                        height: LINE_W * 2,
+                                        borderRadius: 2,
+                                      }}
+                                      title="任务已完成"
+                                    />
+                                  ) : (
+                                    <div
+                                      className="absolute z-20"
+                                      style={{
+                                        left: segRight - 1.5,
+                                        top: ACTUAL_CENTER - (LINE_W * 1.5) / 2,
+                                        width: 3,
+                                        height: LINE_W * 1.5,
+                                        background: endColor,
+                                      }}
+                                      title={`进度汇报 ${rep.date}`}
+                                    />
+                                  )}
+                                </Fragment>
+                              );
+                            })}
+
+                            {/* 已完成但无进度汇报：在起点画绿色实心方块 */}
+                            {isDone && reportsSorted.length === 0 && (
+                              <div
+                                className="absolute bg-green-500 z-20"
+                                style={{
+                                  left: actualLeft - LINE_W,
+                                  top: ACTUAL_CENTER - LINE_W,
+                                  width: LINE_W * 2,
+                                  height: LINE_W * 2,
+                                  borderRadius: 2,
+                                }}
+                                title="任务已完成"
+                              />
+                            )}
+                          </Fragment>
+                        )}
+
+                        {/* 里程碑标记：空心小旗（未完成）/ 实心五角星（完成）*/}
+                        {isMilestone && (
                           <div
-                            className="absolute"
+                            className="absolute -translate-x-1/2 -translate-y-1/2 z-20"
                             style={{
-                              left: actualLeft - 4,
-                              top: '56%',
-                              width: 0,
-                              height: 0,
-                              borderLeft: '5px solid transparent',
-                              borderRight: '5px solid transparent',
-                              borderTop: '7px solid #22c55e',
+                              left: planLeft + Math.max(planWidth, LINE_W) / 2,
+                              top: '50%',
                             }}
-                          />
-                        ) : null}
+                            title={`${isMilestoneDone(item) ? '已完成' : '未完成'}里程碑：${item.title}`}
+                          >
+                            {isMilestoneDone(item) ? (
+                              <Star
+                                className="w-5 h-5 drop-shadow"
+                                style={{ fill: '#f59e0b', color: '#f59e0b', strokeWidth: 0 }}
+                              />
+                            ) : (
+                              <Flag
+                                className="w-4 h-4"
+                                style={{ color: '#8b5cf6', fill: 'none', strokeWidth: 2 }}
+                              />
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );

@@ -4,6 +4,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { apiClient } from '@/lib/apiClient';
+import { useProjectStore } from '@/store/useProjectStore';
 
 export const useTaskStore = create(
   persist(
@@ -32,10 +33,24 @@ export const useTaskStore = create(
       },
 
       updateTask: async (id, data) => {
+        const oldTask = get().tasks.find((t) => t.id === id);
+        const oldStatus = oldTask?.status || 'todo';
         const task = await apiClient.updateTask(id, data);
         set((state) => ({
           tasks: state.tasks.map((t) => (t.id === id ? task : t)),
         }));
+        // 状态联动：任务从「待启动」变为「进行中」时，自动将所属项目同步为「进行中」
+        const newStatus = task.status || oldStatus;
+        if (oldStatus === 'todo' && newStatus === 'in_progress') {
+          const pid = task.projectId || task.project_id;
+          if (pid) {
+            const projectStore = useProjectStore.getState();
+            const proj = projectStore.projects.find((p) => p.id === pid);
+            if (proj && proj.status !== 'in_progress') {
+              await projectStore.updateProject(pid, { status: 'in_progress' });
+            }
+          }
+        }
         return task;
       },
 

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Plus, Filter, Search, Calendar, User, Flag, Clock, TrendingUp } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Button from '@/components/ui/Button';
@@ -13,6 +14,7 @@ import { useProjectStore } from '@/store/useProjectStore';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useMemberStore } from '@/store/useMemberStore';
+import { useAccess } from '@/hooks/useAccess';
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
@@ -30,6 +32,7 @@ const PRIORITY_OPTIONS = [
 ];
 
 export default function TasksPage() {
+  const location = useLocation();
   const projects = useProjectStore((s) => s.projects);
   const tasks = useTaskStore((s) => s.tasks);
   const deleteTask = useTaskStore((s) => s.deleteTask);
@@ -37,6 +40,9 @@ export default function TasksPage() {
   const currentUserId = useAuthStore((s) => s.currentUserId);
   const members = useMemberStore((s) => s.members);
   const currentUser = members.find((m) => m.id === currentUserId);
+  const { isAdmin, canManageProject } = useAccess();
+  // 仅当管理员或至少拥有一个可管理的项目时才允许新建任务（成员无自有项目时后端会 403）
+  const canCreateTask = isAdmin || projects.some((p) => canManageProject(p));
 
   const [view, setView] = useState('kanban');
   const [projectFilter, setProjectFilter] = useState('');
@@ -47,6 +53,22 @@ export default function TasksPage() {
   const [editingTask, setEditingTask] = useState(null);
   const [progressTask, setProgressTask] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+
+  // Auto-open progress modal when URL has ?taskId=xxx
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const taskId = params.get('taskId');
+    if (taskId) {
+      const task = tasks.find((t) => t.id === taskId);
+      if (task) {
+        setProgressTask(task);
+        // Clean up URL
+        const url = new URL(window.location.href);
+        url.searchParams.delete('taskId');
+        window.history.replaceState({}, '', url.toString());
+      }
+    }
+  }, [location.search, tasks]);
 
   const activeProjectIds = new Set(projects.filter((p) => !p.archived).map((p) => p.id));
   const activeTasks = tasks.filter((t) => activeProjectIds.has(t.projectId));
@@ -78,6 +100,11 @@ export default function TasksPage() {
     setProgressTask(task);
   };
 
+  // progressTask 存快照会导致关联文档后 UI 不刷新，改为实时从 store 查找最新任务
+  const liveProgressTask = progressTask
+    ? tasks.find((t) => t.id === progressTask.id) || progressTask
+    : null;
+
   const handleCloseProgress = () => {
     setProgressTask(null);
   };
@@ -94,10 +121,12 @@ export default function TasksPage() {
       title="任务管理"
       subtitle={`${activeTasks.length} 项任务`}
       action={
-        <Button size="sm" onClick={handleQuickAdd}>
-          <Plus className="w-4 h-4" />
-          新建任务
-        </Button>
+        canCreateTask ? (
+          <Button size="sm" onClick={handleQuickAdd}>
+            <Plus className="w-4 h-4" />
+            新建任务
+          </Button>
+        ) : undefined
       }
     >
       {/* Filters */}
@@ -181,10 +210,11 @@ export default function TasksPage() {
         />
       )}
 
-      {progressTask && (
+      {liveProgressTask && (
         <TaskProgressModal
-          task={progressTask}
+          task={liveProgressTask}
           onClose={handleCloseProgress}
+          projects={projects}
         />
       )}
 

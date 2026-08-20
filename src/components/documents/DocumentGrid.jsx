@@ -1,6 +1,7 @@
 import { FileText, Edit2, Trash2, Download } from 'lucide-react';
 import Badge from '@/components/ui/Badge';
 import { formatDate, getProjectColor } from '@/lib/utils';
+import { useAccess } from '@/hooks/useAccess';
 
 const CATEGORY_VARIANTS = {
   '需求文档': 'primary',
@@ -15,6 +16,7 @@ const CATEGORY_VARIANTS = {
 };
 
 export default function DocumentGrid({ documents, projects, onEdit, onDelete }) {
+  const { canManageDocument } = useAccess();
   if (documents.length === 0) {
     return <div className="text-center text-sm text-slate-400 py-12">暂无文档</div>;
   }
@@ -44,6 +46,7 @@ export default function DocumentGrid({ documents, projects, onEdit, onDelete }) 
               <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
                 <FileText className="w-5 h-5 text-blue-500" />
               </div>
+              {canManageDocument(doc) && (
               <div className="flex gap-1">
                 <button
                   onClick={() => onEdit?.(doc)}
@@ -58,6 +61,7 @@ export default function DocumentGrid({ documents, projects, onEdit, onDelete }) 
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
+              )}
             </div>
 
             <h4 className="text-sm font-medium text-slate-800 mb-1 line-clamp-2">{doc.title}</h4>
