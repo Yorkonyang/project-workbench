@@ -60,6 +60,7 @@ export function useAccess() {
     return {
         currentUserId,
         isAdmin,
+        isProjectOwner,
         canManageProject,
         canManageTask,
         canReportTask,

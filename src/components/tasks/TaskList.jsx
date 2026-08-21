@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Edit2, Trash2, TrendingUp } from 'lucide-react';
 import Badge from '@/components/ui/Badge';
 import { useMemberStore } from '@/store/useMemberStore';
 import { useProjectStore } from '@/store/useProjectStore';
+import { useOrgStore } from '@/store/useOrgStore';
+import { AVATAR_COLORS } from '@/config/theme';
 import { useAccess } from '@/hooks/useAccess';
 import {
   getPriorityConfig,
@@ -14,15 +16,26 @@ import {
   cn,
 } from '@/lib/utils';
 
-export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress }) {
+export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress, onRowClick }) {
   const members = useMemberStore((s) => s.members);
   const activeProjects = useProjectStore((s) => s.projects.filter((p) => !p.archived));
   const activeProjectIds = new Set(activeProjects.map((p) => p.id));
+  const departments = useOrgStore((s) => s.getAllDepartments());
   const { canManageTask, canReportTask } = useAccess();
+
+  // 部门颜色映射
+  const deptColorMap = useMemo(() => {
+    const map = new Map();
+    departments.forEach((d, i) => map.set(d.id, AVATAR_COLORS[i % AVATAR_COLORS.length]));
+    return map;
+  }, [departments]);
 
   if (tasks.length === 0) {
     return <div className="text-center text-sm text-slate-400 py-8">暂无任务</div>;
   }
+
+  // 阻止操作列点击触发行跳转
+  const stopRow = (e) => e.stopPropagation();
 
   return (
     <div className="overflow-x-auto">
@@ -51,7 +64,15 @@ export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress
               : statusConfig;
 
             return (
-              <tr key={task.id} className={cn("border-b hover:bg-slate-50", isArchived && "opacity-60")}>
+              <tr
+                key={task.id}
+                onClick={onRowClick ? () => onRowClick(task) : undefined}
+                className={cn(
+                  "border-b hover:bg-slate-50",
+                  isArchived && "opacity-60",
+                  onRowClick && "cursor-pointer"
+                )}
+              >
                 <td className="py-2.5 px-3">
                   <div className="font-medium text-slate-800">{task.title}</div>
                   {task.tags?.length > 0 && (
@@ -86,7 +107,7 @@ export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress
                             >
                               <span
                                 className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-white text-[8px] font-bold shrink-0"
-                                style={{ backgroundColor: m.avatarColor }}
+                                style={{ backgroundColor: deptColorMap.get(m.departmentId) || m.avatarColor }}
                               >
                                 {m.name.charAt(0)}
                               </span>
@@ -118,7 +139,7 @@ export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress
                     <div className="flex justify-end gap-1">
                       {canReportTask(task) && (
                         <button
-                          onClick={() => onProgress?.(task)}
+                          onClick={(e) => { stopRow(e); onProgress?.(task); }}
                           className="p-1.5 hover:bg-primary-50 rounded text-slate-400 hover:text-primary-600"
                           title="进度汇报"
                         >
@@ -127,7 +148,7 @@ export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress
                       )}
                       {canManageTask(task) && (
                         <button
-                          onClick={() => onEdit?.(task)}
+                          onClick={(e) => { stopRow(e); onEdit?.(task); }}
                           className="p-1.5 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-600"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
@@ -135,7 +156,7 @@ export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress
                       )}
                       {canManageTask(task) && (
                         <button
-                          onClick={() => onDelete?.(task)}
+                          onClick={(e) => { stopRow(e); onDelete?.(task); }}
                           className="p-1.5 hover:bg-red-50 rounded text-slate-400 hover:text-red-500"
                         >
                           <Trash2 className="w-3.5 h-3.5" />

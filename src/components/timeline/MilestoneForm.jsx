@@ -12,11 +12,11 @@ const STATUS_OPTIONS = [
   { value: 'blocked', label: '已阻塞' },
 ];
 
-export default function MilestoneForm({ milestone, projects, onClose, onSave }) {
+export default function MilestoneForm({ milestone, projects, onClose, onSave, defaultProjectId = '' }) {
   // 直接用 milestone 懒初始化，避免「先 false 再 useEffect 回填」在重开编辑时
   // 因时序/双挂载导致复选框等字段未正确还原
   const [title, setTitle] = useState(milestone?.title || '');
-  const [projectId, setProjectId] = useState(milestone?.projectId || '');
+  const [projectId, setProjectId] = useState(milestone?.projectId || defaultProjectId || '');
   const [date, setDate] = useState(milestone?.date || '');
   const [status, setStatus] = useState(milestone?.status || 'pending');
   const [isCritical, setIsCritical] = useState(milestone?.isCritical || false);

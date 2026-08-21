@@ -437,6 +437,53 @@ class ApiClient {
             method: 'DELETE',
         });
     }
+
+    // ===== SSO 单点登录 =====
+    // 用轻流通知链接中的 u/exp/sig 兑换一次性 ticket（仅用于 SSO 流程，不走 x-user-id 头）
+    async ssoExchange(u, exp, sig) {
+        const qs = `?u=${encodeURIComponent(u)}&exp=${encodeURIComponent(exp)}&sig=${encodeURIComponent(sig)}`;
+        // 注意：ssoExchange 时 currentUserId 尚未设置，不能带 x-user-id 头
+        const url = `${this.baseURL}/auth/sso${qs}`;
+        const response = await fetch(url, { method: 'GET' });
+        if (!response.ok) {
+            let message = `HTTP ${response.status}: ${response.statusText}`;
+            try {
+                const data = await response.json();
+                if (data && data.error) message = data.error;
+            } catch (e) { /* ignore */ }
+            throw new Error(message);
+        }
+        return await response.json();
+    }
+
+    // 用 ticket 校验有效性，返回 userId/email
+    async ssoValidate(ticket) {
+        const url = `${this.baseURL}/auth/me?ticket=${encodeURIComponent(ticket)}`;
+        const response = await fetch(url, { method: 'GET' });
+        if (!response.ok) {
+            let message = `HTTP ${response.status}: ${response.statusText}`;
+            try {
+                const data = await response.json();
+                if (data && data.error) message = data.error;
+            } catch (e) { /* ignore */ }
+            throw new Error(message);
+        }
+        return await response.json();
+    }
+
+    // 消费 HttpOnly Cookie 中的一次性 ticket（SSO 302 后由浏览器自动携带，无需在 URL 传参）
+    async ssoConsume() {
+        const response = await fetch(`${this.baseURL}/auth/me`, { method: 'GET' });
+        if (!response.ok) {
+            let message = `HTTP ${response.status}: ${response.statusText}`;
+            try {
+                const data = await response.json();
+                if (data && data.error) message = data.error;
+            } catch (e) { /* ignore */ }
+            throw new Error(message);
+        }
+        return await response.json();
+    }
 }
 
 export const apiClient = new ApiClient();

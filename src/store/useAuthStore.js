@@ -35,6 +35,27 @@ export const useAuthStore = create(
           loginError: null,
         }),
 
+      // SSO 单点登录：轻流通知链接（HMAC 签名）兑换 ticket 后直接登入，
+      // 不走邮箱密码比对。ssoTicket 存 localStorage 仅用于审计/续期，正常请求仍走 x-user-id。
+      ssoLogin: ({ userId, email, ssoTicket }) => {
+        set({
+          currentUserId: userId,
+          isAuthenticated: true,
+          loginError: null,
+          ssoEmail: email || null,
+          ssoTicket: ssoTicket || null,
+          ssoLoginAt: Date.now(),
+        });
+        return true;
+      },
+
+      clearSsoSession: () =>
+        set({
+          ssoEmail: null,
+          ssoTicket: null,
+          ssoLoginAt: null,
+        }),
+
       clearError: () => set({ loginError: null }),
 
       // 获取当前用户对象（需传入 members 数组）

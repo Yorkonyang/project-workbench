@@ -366,25 +366,6 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
                       placeholder="请描述本次工作进展..."
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                      当前进度: {newReport.progress || 0}%
-                    </label>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      step="10"
-                      value={newReport.progress || 0}
-                      onChange={(e) => setNewReport({ ...newReport, progress: parseInt(e.target.value) })}
-                      className="w-full accent-primary-500"
-                    />
-                    <div className="flex justify-between text-xs text-slate-400 mt-1">
-                      <span>0%</span>
-                      <span>50%</span>
-                      <span>100%</span>
-                    </div>
-                  </div>
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" onClick={() => setShowForm(false)}>
                       取消
@@ -410,11 +391,10 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-100 bg-slate-50/50">
-                      <th className="py-2 px-2 text-left text-xs font-medium text-slate-500 w-10">编号</th>
+                      <th className="py-2 px-2 text-left text-xs font-medium text-slate-500">编号</th>
                       <th className="py-2 px-2 text-left text-xs font-medium text-slate-500">日期</th>
                       <th className="py-2 px-2 text-left text-xs font-medium text-slate-500">汇报人</th>
                       <th className="py-2 px-2 text-left text-xs font-medium text-slate-500">汇报内容</th>
-                      <th className="py-2 px-2 text-left text-xs font-medium text-slate-500 w-14">进度</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -428,17 +408,6 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
                           </span>
                         </td>
                         <td className="py-2 px-2 text-slate-700">{report.content}</td>
-                        <td className="py-2 px-2">
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-primary-500 rounded-full"
-                                style={{ width: `${report.progress}%` }}
-                              />
-                            </div>
-                            <span className="text-xs text-slate-500 w-8">{report.progress}%</span>
-                          </div>
-                        </td>
                       </tr>
                     ))}
                   </tbody>

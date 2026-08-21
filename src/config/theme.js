@@ -74,3 +74,10 @@ export const PROJECT_STATUS_CONFIG = {
 
 // Document categories
 export const DOC_CATEGORIES = ['需求文档', '设计文档', '会议纪要', '验收报告', '计划报告', '其他'];
+
+// 缺省头像颜色（成员头像与部门头像共用）：第1蓝、第2翠绿、第3紫、第4橙、第5红、第6粉、第7青、第8黄绿
+// 部门头像按「全局顺序」循环取色：第 N 个部门取 AVATAR_COLORS[N % length]，第 9 个回到第 1 个蓝色。
+export const AVATAR_COLORS = [
+  '#3b82f6', '#14b8a6', '#8b5cf6', '#f59e0b',
+  '#ef4444', '#ec4899', '#06b6d4', '#84cc16',
+];

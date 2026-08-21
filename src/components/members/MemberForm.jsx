@@ -7,11 +7,7 @@ import { useMemberStore } from '@/store/useMemberStore';
 import { useOrgStore } from '@/store/useOrgStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { ROLES } from '@/config/permissions';
-
-const AVATAR_COLORS = [
-  '#3b82f6', '#14b8a6', '#8b5cf6', '#f59e0b',
-  '#ef4444', '#ec4899', '#06b6d4', '#84cc16',
-];
+import { AVATAR_COLORS } from '@/config/theme';
 
 export default function MemberForm({ onClose, member = null }) {
   const projects = useProjectStore((s) => s.projects);

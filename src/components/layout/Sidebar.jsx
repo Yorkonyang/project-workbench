@@ -17,6 +17,7 @@ import {
   Building2,
 } from 'lucide-react';
 import { useProjectStore } from '@/store/useProjectStore';
+import { useAccess } from '@/hooks/useAccess';
 import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
@@ -29,10 +30,15 @@ const NAV_ITEMS = [
   { path: '/risks', label: '风险管理', icon: AlertTriangle },
 ];
 
-const ADMIN_ITEMS = [
+// 仅管理员可见
+const ADMIN_ONLY_ITEMS = [
   { path: '/members', label: '组织架构与成员', icon: Building2 },
-  { path: '/dictionary', label: '数据字典', icon: BookOpen },
   { path: '/reminder-settings', label: '提醒设置', icon: Settings },
+];
+
+// 仅项目负责人可见（任一项目的 ownerId / manager 命中当前用户，或管理员）
+const PROJECT_OWNER_ITEMS = [
+  { path: '/dictionary', label: '数据字典', icon: BookOpen },
 ];
 
 export default function Sidebar({ isOpen, onClose }) {
@@ -40,6 +46,11 @@ export default function Sidebar({ isOpen, onClose }) {
   const projects = useProjectStore((s) => s.projects);
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
+  const { isAdmin, isProjectOwner } = useAccess();
+
+  // 当前用户是任意一个项目的负责人/管理员
+  const isAnyProjectOwner =
+    isAdmin || (projects || []).some((p) => isProjectOwner(p));
 
   const handleProjectClick = (id) => {
     navigate(`/projects/${id}`);
@@ -136,7 +147,7 @@ export default function Sidebar({ isOpen, onClose }) {
           {/* Projects - 移除侧边栏项目列表，统一由项目列表页面管理 */}
 
           {/* Admin Section */}
-          {!collapsed && (
+          {isAdmin && !collapsed && (
             <div className="mt-6">
               <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest px-3 mb-2">
                 管理
@@ -144,7 +155,33 @@ export default function Sidebar({ isOpen, onClose }) {
             </div>
           )}
           <div className="space-y-0.5 mt-1">
-            {ADMIN_ITEMS.map((item) => {
+            {ADMIN_ONLY_ITEMS.filter((item) => isAdmin).map((item) => {
+              const Icon = item.icon;
+              const isActive = location.pathname === item.path;
+              return (
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => window.innerWidth < 1024 && onClose()}
+                  className={cn(
+                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-base font-medium transition-smooth relative',
+                    isActive
+                      ? 'bg-primary-500/20 text-primary-300'
+                      : 'text-slate-400 hover:bg-white/5 hover:text-white',
+                    collapsed && 'justify-center'
+                  )}
+                >
+                  {isActive && (
+                    <div
+                      className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-r-full bg-primary-400"
+                    />
+                  )}
+                  <Icon className="w-5 h-5 shrink-0" />
+                  {!collapsed && <span className="whitespace-nowrap">{item.label}</span>}
+                </NavLink>
+              );
+            })}
+            {PROJECT_OWNER_ITEMS.filter((item) => isAnyProjectOwner).map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname === item.path;
               return (

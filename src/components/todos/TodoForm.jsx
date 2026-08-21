@@ -96,7 +96,7 @@ export default function TodoForm({ onClose, todo = null, defaultProjectId = null
             ]}
           />
           <Select
-            label="关联项目"
+            label="所属项目"
             value={form.projectId}
             onChange={set('projectId')}
             options={[

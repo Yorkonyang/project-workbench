@@ -4,6 +4,7 @@ import { format, addDays, isSameDay, parseISO, startOfMonth, endOfMonth } from '
 import { Flag, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isMilestoneDone } from '@/config/theme';
+import { buildProjectThemeMap } from '@/lib/projectTheme';
 
 export default function GanttView({ tasks, milestones, projects }) {
   const navigate = useNavigate();
@@ -147,15 +148,22 @@ export default function GanttView({ tasks, milestones, projects }) {
     }
   };
 
-  // Group by project
+  // Group by project — 按 code 字典序排序，保证与 TaskCard 进行中列填色完全对应
+  const projectThemeMap = useMemo(() => buildProjectThemeMap(projects || []), [projects]);
   const groupByProject = useMemo(() => {
     const groups = {};
     allItems.forEach((item) => {
       if (!groups[item.projectId]) groups[item.projectId] = [];
       groups[item.projectId].push(item);
     });
-    return Object.entries(groups);
-  }, [allItems]);
+    // 按项目编号字典序稳定排序
+    const sortedEntries = Object.entries(groups).sort(([idA], [idB]) => {
+      const codeA = (projects || []).find((p) => p.id === idA)?.code || idA;
+      const codeB = (projects || []).find((p) => p.id === idB)?.code || idB;
+      return (codeA || '').localeCompare(codeB || '');
+    });
+    return sortedEntries;
+  }, [allItems, projects]);
 
   const todayPosition = getPosition(todayISO);
 
@@ -174,15 +182,16 @@ export default function GanttView({ tasks, milestones, projects }) {
     return () => cancelAnimationFrame(raf);
   }, [todayPosition, chartStartDate, totalDays, dayWidth]);
 
-  // Project color theme mapping (cycles through themes)
-  const projectThemeColors = [
-    { nameBg: 'bg-slate-400', nameText: 'text-white', rowEven: 'bg-white', rowOdd: 'bg-slate-50', accent: 'border-slate-200' },
-    { nameBg: 'bg-emerald-500', nameText: 'text-white', rowEven: 'bg-white', rowOdd: 'bg-emerald-50', accent: 'border-emerald-200' },
-    { nameBg: 'bg-blue-500', nameText: 'text-white', rowEven: 'bg-white', rowOdd: 'bg-blue-50', accent: 'border-blue-200' },
-    { nameBg: 'bg-amber-500', nameText: 'text-white', rowEven: 'bg-white', rowOdd: 'bg-amber-50', accent: 'border-amber-200' },
-  ];
-
-  const getProjectTheme = (projectIdx) => projectThemeColors[projectIdx % projectThemeColors.length];
+  // Project color theme mapping: 使用共享主题表（src/lib/projectTheme.js），与 TaskCard 进行中列底色保持完全一致
+  const getProjectTheme = (projectIdx) => {
+    const themes = [
+      { nameBg: 'bg-slate-400', nameText: 'text-white', rowEven: 'bg-white', rowOdd: 'bg-slate-50', accent: 'border-slate-200' },
+      { nameBg: 'bg-emerald-500', nameText: 'text-white', rowEven: 'bg-white', rowOdd: 'bg-emerald-50', accent: 'border-emerald-200' },
+      { nameBg: 'bg-blue-500', nameText: 'text-white', rowEven: 'bg-white', rowOdd: 'bg-blue-50', accent: 'border-blue-200' },
+      { nameBg: 'bg-amber-500', nameText: 'text-white', rowEven: 'bg-white', rowOdd: 'bg-amber-50', accent: 'border-amber-200' },
+    ];
+    return themes[projectIdx % themes.length];
+  };
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">

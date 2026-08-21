@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { ChevronRight, ChevronDown, Folder, FolderOpen, Plus, Trash2, Pencil, FileSpreadsheet } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, Plus, Trash2, Pencil, FileSpreadsheet } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import ExcelImportModal from '@/components/organization/ExcelImportModal';
 import { useOrgStore } from '@/store/useOrgStore';
+import { AVATAR_COLORS } from '@/config/theme';
 import { cn } from '@/lib/utils';
 
 export default function OrganizationTree({ onSelectDept, selectedDeptId = null }) {
@@ -27,6 +28,11 @@ export default function OrganizationTree({ onSelectDept, selectedDeptId = null }
   const allOptions = [{ value: '', label: '顶级部门（无上级）' }].concat(
     flatDepts.map((d) => ({ value: d.id, label: d.name }))
   );
+
+  // 部门头像颜色：按全局扁平顺序（DFS 前序）循环缺省头像色。
+  // 第 1 个部门=蓝、第 2 个=翠绿 … 第 9 个回到第 1 个蓝色，如此循环。
+  const deptColorMap = new Map();
+  flatDepts.forEach((d, i) => deptColorMap.set(d.id, AVATAR_COLORS[i % AVATAR_COLORS.length]));
 
   const toggleExpand = (id) => {
     setExpanded((prev) => {
@@ -155,6 +161,7 @@ export default function OrganizationTree({ onSelectDept, selectedDeptId = null }
               editName={editName}
               setEditName={setEditName}
               onSaveEdit={handleSaveEdit}
+              colorMap={deptColorMap}
             />
           ))}
         </div>
@@ -194,7 +201,7 @@ export default function OrganizationTree({ onSelectDept, selectedDeptId = null }
 function DeptNode({
   dept, hasChildren, level, expanded, toggleExpand,
   selectedDeptId, onSelect, onAddChild, onEdit, onDelete,
-  editingDept, editName, setEditName, onSaveEdit,
+  editingDept, editName, setEditName, onSaveEdit, colorMap,
 }) {
   const children = dept.children || [];
   const isExpanded = expanded.has(dept.id);
@@ -226,11 +233,17 @@ function DeptNode({
           )}
         </button>
 
-        {/* Icon */}
+        {/* Icon - 部门头像：按全局顺序循环缺省头像色 */}
         {isEditing ? (
           <Pencil className="w-3.5 h-3.5 text-amber-500 shrink-0" />
         ) : (
-          <FolderOpen className="w-4 h-4 text-blue-500 shrink-0" />
+          <div
+            className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0"
+            style={{ backgroundColor: (colorMap?.get(dept.id)) || '#6b7280' }}
+            title={dept.name}
+          >
+            {dept.name.charAt(0)}
+          </div>
         )}
 
         {/* Name */}
@@ -316,6 +329,7 @@ function DeptNode({
               editName={editName}
               setEditName={setEditName}
               onSaveEdit={onSaveEdit}
+              colorMap={colorMap}
             />
           ))}
         </div>

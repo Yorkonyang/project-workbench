@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useSearchParams, useNavigate } from 'react-router-dom';
 import Layout from '@/components/layout/Layout';
 import DashboardPage from '@/pages/DashboardPage';
 import TasksPage from '@/pages/TasksPage';
@@ -9,12 +9,14 @@ import TodosPage from '@/pages/TodosPage';
 import RisksPage from '@/pages/RisksPage';
 import ProjectDetailPage from '@/pages/ProjectDetailPage';
 import ProjectsPage from '@/pages/ProjectsPage';
+import TaskDetailPage from '@/pages/TaskDetailPage';
+import TodoDetailPage from '@/pages/TodoDetailPage';
 import MembersPage from '@/pages/MembersPage';
 import ReminderSettingsPage from '@/pages/ReminderSettingsPage';
 import DictionaryPage from '@/pages/DictionaryPage';
 import LoginPage from '@/pages/LoginPage';
 import { initSeedData } from '@/lib/seedData';
-import { refreshAllData } from '@/lib/bootstrap';
+import { refreshAllData, bootstrapAfterLogin } from '@/lib/bootstrap';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useTaskStore } from '@/store/useTaskStore';
@@ -28,11 +30,14 @@ import { useDocumentStore } from '@/store/useDocumentStore';
 import { useDictionaryStore } from '@/store/useDictionaryStore';
 import { useOrgStore } from '@/store/useOrgStore';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import apiClient from '@/lib/apiClient';
 
 export default function App() {
   const [hydrated, setHydrated] = useState(false);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [debugInfo, setDebugInfo] = useState({});
+
+  // SSO 登录改由 /sso-callback 路由统一处理（后端写入 HttpOnly Cookie，前端地址栏不再暴露邮箱/签名）
 
   // Initialize stores from API
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
@@ -168,11 +173,65 @@ export default function App() {
           <Route path="/dictionary" element={<DictionaryPage />} />
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/task/:taskId" element={<TaskDetailPage />} />
+          <Route path="/todo/:todoId" element={<TodoDetailPage />} />
         </Route>
 
-        {/* 兜底 */}
+        {/* SSO 跳转回调（登录前可访问）：后端已写入 HttpOnly Cookie，这里消费并登录 */}
+        <Route path="/sso-callback" element={<SsoCallback />} />
+
+        {/*  * 兜底 */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </ErrorBoundary>
+  );
+}
+
+// ===== SSO 回调组件（方案A）=====
+// 轻流通知链接点击后，后端 /api/auth/sso-link 已把一次性 ticket 写入 HttpOnly Cookie 并 302 到此。
+// 这里仅消费 Cookie 完成登录，URL 全程不含明文邮箱 / 签名 / ticket。
+function SsoCallback() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [status, setStatus] = useState('正在登录…');
+
+  useEffect(() => {
+    const redirect = searchParams.get('redirect') || '/';
+    (async () => {
+      try {
+        // ticket 由 HttpOnly Cookie 自动携带（不出现在 URL）
+        const me = await apiClient.ssoConsume();
+        if (!me || !me.userId) {
+          navigate('/login', { replace: true });
+          return;
+        }
+        useAuthStore.getState().ssoLogin({
+          userId: me.userId,
+          email: me.email,
+          ssoTicket: '',
+        });
+        try {
+          await useMemberStore.getState().fetchMembers();
+        } catch (e) {
+          console.warn('[SSO] fetchMembers 失败:', e?.message);
+       }
+        try {
+          await bootstrapAfterLogin();
+        } catch (e) {
+          console.warn('[SSO] bootstrapAfterLogin 失败:', e?.message);
+        }
+        navigate(redirect, { replace: true });
+      } catch (err) {
+        console.error('[SSO] 登录失败:', err);
+        setStatus('登录失败：' + (err?.message || '未知错误'));
+        setTimeout(() => navigate('/login', { replace: true }), 2000);
+      }
+    })();
+  }, [navigate, searchParams]);
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500 text-sm">
+      {status}
+    </div>
   );
 }

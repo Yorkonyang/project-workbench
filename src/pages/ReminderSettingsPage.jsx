@@ -20,14 +20,19 @@ export default function ReminderSettingsPage() {
   const [saved, setSaved] = useState(false);
 
   // 轻流 BPM 配置
-  const [bpmConfig, setBpmConfig] = useState({ baseUrl: '', qsourceId: '' });
+  const [bpmConfig, setBpmConfig] = useState({ baseUrl: '', qsourceId: '', frontendBaseUrl: '', ssoSecret: '' });
   const [bpmSaving, setBpmSaving] = useState(false);
   const [bpmTesting, setBpmTesting] = useState(false);
   const [bpmTestResult, setBpmTestResult] = useState(null);
 
   useEffect(() => {
     apiClient.getQingflowConfig().then(cfg => {
-      setBpmConfig({ baseUrl: cfg.baseUrl || '', qsourceId: cfg.qsourceId || '' });
+      setBpmConfig({
+        baseUrl: cfg.baseUrl || '',
+        qsourceId: cfg.qsourceId || '',
+        frontendBaseUrl: cfg.frontendBaseUrl || '',
+        ssoSecret: cfg.ssoSecret || '',
+      });
     }).catch(() => {});
   }, []);
 
@@ -339,6 +344,35 @@ export default function ReminderSettingsPage() {
               </p>
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                前端访问地址（任务跳转链接）
+              </label>
+              <Input
+                value={bpmConfig.frontendBaseUrl}
+                onChange={(e) => setBpmConfig(f => ({ ...f, frontendBaseUrl: e.target.value }))}
+                placeholder="http://localhost:5173 或内网/公网部署地址"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                责任人收到轻流通知后，点击推送的任务链接将跳转到该地址下的任务详情页。留空则默认 http://localhost:5173（仅本机可访问），部署到服务器后请填写实际可访问地址。
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                SSO 签名密钥（免登录直达）
+              </label>
+              <Input
+                type="password"
+                value={bpmConfig.ssoSecret}
+                onChange={(e) => setBpmConfig(f => ({ ...f, ssoSecret: e.target.value }))}
+                placeholder="HMAC 密钥（任意字符串，部署后请修改默认密钥）"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                用于对推送链接中的责任人身份做 HMAC-SHA256 签名，使责任人点击链接后免登录直达任务详情。留空则使用环境变量 SSO_SECRET 或内置开发密钥。修改后仅对新推送的链接生效，旧链接仍按原密钥校验。
+              </p>
+            </div>
+
             {bpmTestResult && (
               <div className={cn(
                 'flex items-center gap-2 px-3 py-2 rounded-lg text-sm',
@@ -373,6 +407,7 @@ export default function ReminderSettingsPage() {
                 <li>• 优先级 → yxj（紧急/高/中/低）</li>
                 <li>• 截止日期 → jzrq</li>
                 <li>• 所属项目 → ssxm</li>
+                <li>• 任务链接 → taskUrl（前端直达链接，责任人点击跳转到任务详情填写进度/关闭待办）</li>
               </ul>
             </div>
           </div>

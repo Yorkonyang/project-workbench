@@ -4,7 +4,7 @@ import { ROLES } from '@/config/permissions';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useAuthStore } from '@/store/useAuthStore';
 
-export default function MemberCard({ member, onEdit, onDelete, onResetPassword, canManage, isAdmin }) {
+export default function MemberCard({ member, onEdit, onDelete, onResetPassword, canManage, isAdmin, deptColor }) {
   const projects = useProjectStore((s) => s.projects);
   const currentUserId = useAuthStore((s) => s.currentUserId);
   const isCurrentUser = currentUserId === member.id;
@@ -12,13 +12,16 @@ export default function MemberCard({ member, onEdit, onDelete, onResetPassword, 
   const memberProjects = projects.filter((p) => member.projectIds?.includes(p.id));
   const canReset = isAdmin && onResetPassword && !isCurrentUser;
 
+  // 头像颜色：优先用部门颜色，其次用成员自己的颜色，最后灰色兜底
+  const avatarBg = deptColor || member.avatarColor || '#6b7280';
+
   return (
     <div className={`bg-white rounded-lg border p-4 transition-all hover:shadow-md ${isCurrentUser ? 'border-primary-300 ring-1 ring-primary-200' : 'border-slate-200'}`}>
       <div className="flex items-start gap-3">
         {/* Avatar */}
         <div
           className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg shrink-0"
-          style={{ backgroundColor: member.avatarColor || '#6b7280' }}
+          style={{ backgroundColor: avatarBg }}
         >
           {member.name?.charAt(0) || '?'}
         </div>

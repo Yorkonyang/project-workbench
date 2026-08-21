@@ -1,15 +1,25 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Check, Edit2, Trash2, Calendar, Link2, Bell, User, CheckSquare, Flag } from 'lucide-react';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useMemberStore } from '@/store/useMemberStore';
+import { useOrgStore } from '@/store/useOrgStore';
+import { AVATAR_COLORS } from '@/config/theme';
 import { getPriorityConfig, dueDateLabel, isOverdue, cn } from '@/lib/utils';
 import { useAccess } from '@/hooks/useAccess';
 
 export default function TodoList({ items, onEditTodo, onDeleteTodo, onToggleTodo, onProgressTask }) {
   const projects = useProjectStore((s) => s.projects);
   const members = useMemberStore((s) => s.members);
+  const departments = useOrgStore((s) => s.getAllDepartments());
   const { canManageTodo } = useAccess();
   const [confirmTodo, setConfirmTodo] = useState(null);
+
+  // 部门颜色映射
+  const deptColorMap = useMemo(() => {
+    const map = new Map();
+    departments.forEach((d, i) => map.set(d.id, AVATAR_COLORS[i % AVATAR_COLORS.length]));
+    return map;
+  }, [departments]);
 
   // 按类型分别排序
   const sorted = [...items].sort((a, b) => {
@@ -150,7 +160,7 @@ export default function TodoList({ items, onEditTodo, onDeleteTodo, onToggleTodo
                       {assigneeMember ? (
                         <span
                           className="w-4 h-4 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                          style={{ backgroundColor: assigneeMember.avatarColor || '#6b7280' }}
+                          style={{ backgroundColor: deptColorMap.get(assigneeMember.departmentId) || assigneeMember.avatarColor || '#6b7280' }}
                         >
                           {todo.assignee.charAt(0)}
                         </span>
@@ -253,7 +263,7 @@ export default function TodoList({ items, onEditTodo, onDeleteTodo, onToggleTodo
                           <span
                             key={m.id}
                             className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] font-bold border border-white shrink-0"
-                            style={{ backgroundColor: m.avatarColor || '#6b7280' }}
+                            style={{ backgroundColor: deptColorMap.get(m.departmentId) || m.avatarColor || '#6b7280' }}
                             title={m.name}
                           >
                             {m.name.charAt(0)}

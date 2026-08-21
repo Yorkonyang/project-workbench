@@ -9,6 +9,7 @@ const path = require('path');
 const crypto = require('crypto');
 const qingflow = require('./qingflow');
 const ac = require('./accessControl');
+const sso = require('./auth');
 
 const PORT = process.env.PORT || 3000;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../data/workbench.db');
@@ -170,6 +171,116 @@ const server = http.createServer(async (req, res) => {
             timestamp: new Date().toISOString(),
             server: 'project-workbench-api',
             database: 'local'
+        });
+        return;
+    }
+
+    // SSO 兑换：GET /api/auth/sso?u=<email>&exp=<ts>&sig=<hmac>
+    // 用签名 URL 兑换一次性登录票据（ticket），前端再凭 ticket 调 /api/auth/me 完成登录
+    if (pathname === '/api/auth/sso' && method === 'GET') {
+        const u = url.searchParams.get('u');
+        const exp = url.searchParams.get('exp');
+        const sig = url.searchParams.get('sig');
+
+        const check = sso.verify(u, exp, sig);
+        if (!check.ok) {
+            sendResponse(res, 401, { error: `SSO 链接无效或已过期（${check.reason}）` });
+            return;
+        }
+
+        const data = loadData();
+        const member = data.members.find(m => (m.email || '').toLowerCase() === (u || '').toLowerCase());
+        if (!member) {
+            sendResponse(res, 404, { error: '责任人不存在' });
+            return;
+        }
+
+        const { ticket, expiresAt } = sso.issueTicket(member.id, member.email);
+        sendResponse(res, 200, {
+            ticket,
+            userId: member.id,
+            email: member.email,
+            name: member.name,
+            role: member.role || 'member',
+            expiresAt,
+        });
+        return;
+    }
+
+    // SSO 跳转入口（方案A/B）：GET /api/auth/sso-link?t=<ticket>&exp=<ts>&sig=<hmac>&redirect=<path>
+    // 验证签名 → 签发登录态 ticket 写入 HttpOnly Cookie → 302 跳前端 /sso-callback
+    // 方案 B 的预签 ticket 不在此处消费，可多次点击；待办/任务完成时由后端主动失效。
+    // 前端地址栏不会出现明文邮箱 / 签名 / ticket；Cookie 为 HttpOnly，JS 不可读，SameSite=Lax 抵御 CSRF。
+    if (pathname === '/api/auth/sso-link' && method === 'GET') {
+        const t = url.searchParams.get('t');
+        const exp = url.searchParams.get('exp');
+        const sig = url.searchParams.get('sig');
+        let redirect = url.searchParams.get('redirect') || '/';
+        // 防开放重定向：仅允许站内相对路径（不以 // 或 @ 开头）
+        if (!redirect.startsWith('/') || redirect.startsWith('//') || redirect.includes('@')) {
+            redirect = '/';
+        }
+
+        let memberId, memberEmail;
+        // 方案 B（推荐）：使用预签发的 ticket，URL 中不含邮箱
+        if (t) {
+            const check = sso.verifyTicket(t, exp, sig);
+            if (!check.ok) {
+                sendResponse(res, 401, { error: `SSO 链接无效（${check.reason}）` });
+                return;
+            }
+            // 方案 B：不消费预签 ticket，责任人可多次点击；待办/任务完成时由后端主动失效
+            memberId = check.entry.userId;
+            memberEmail = check.entry.email;
+        } else {
+            // 方案 A（兼容旧通知）：基于 email 的签名
+            const u = url.searchParams.get('u');
+            const check = sso.verify(u, exp, sig);
+            if (!check.ok) {
+                sendResponse(res, 401, { error: `SSO 链接无效（${check.reason}）` });
+                return;
+            }
+            const data = loadData();
+            const member = data.members.find((m) => (m.email || '').toLowerCase() === (u || '').toLowerCase());
+            if (!member) {
+                sendResponse(res, 404, { error: '责任人不存在' });
+                return;
+            }
+            memberId = member.id;
+            memberEmail = member.email;
+        }
+
+        const { ticket, expiresAt } = sso.issueTicket(memberId, memberEmail);
+        const maxAge = Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
+        res.setHeader('Set-Cookie', `sso_ticket=${ticket}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`);
+        const frontendBase = (qingflow.getPushConfig().frontendBaseUrl || 'http://localhost:5173').replace(/\/+$/, '');
+        res.writeHead(302, { Location: `${frontendBase}/sso-callback?redirect=${encodeURIComponent(redirect)}` });
+        res.end();
+        return;
+    }
+
+    // SSO 校验：GET /api/auth/me?ticket=<ticket> 或 读 cookie sso_ticket
+    // 前端登录后调用此接口确认 ticket 有效，并取得 userId 用于后续 x-user-id 头
+    if (pathname === '/api/auth/me' && method === 'GET') {
+        let ticket = url.searchParams.get('ticket');
+        if (!ticket) {
+            // 兼容 SSO 302 之后的前端调用：ticket 存于 HttpOnly cookie（方案A）
+            const cookieHeader = req.headers.cookie || '';
+            const m = cookieHeader.match(/(?:^|;\s*)sso_ticket=([^;]+)/);
+            if (m) ticket = decodeURIComponent(m[1]);
+        }
+        if (!ticket) {
+            sendResponse(res, 400, { error: '缺少 ticket' });
+            return;
+        }
+        const entry = sso.consumeTicket(ticket);
+        if (!entry) {
+            sendResponse(res, 401, { error: 'ticket 无效或已使用' });
+            return;
+        }
+        sendResponse(res, 200, {
+            userId: entry.userId,
+            email: entry.email,
         });
         return;
     }
@@ -583,7 +694,12 @@ const server = http.createServer(async (req, res) => {
             }
             data.todos[index] = { ...data.todos[index], ...body, updated_at: new Date().toISOString() };
             saveData(data);
-            sendResponse(res, 200, data.todos[index]);
+            // 待办被标记完成 → 失效其 SSO ticket（方案 B：多次有效，完成才失效）
+            const updatedTodo = data.todos[index];
+            if (updatedTodo.completed || updatedTodo.status === 'done' || updatedTodo.status === 'completed' || updatedTodo.status === '已完成') {
+                sso.invalidateByRef('todo', id);
+            }
+            sendResponse(res, 200, updatedTodo);
         } else {
             sendResponse(res, 404, { error: 'Todo not found' });
         }
@@ -602,6 +718,8 @@ const server = http.createServer(async (req, res) => {
             }
             data.todos.splice(index, 1);
             saveData(data);
+            // 待办被删除 → 失效其 SSO ticket
+            sso.invalidateByRef('todo', id);
             sendResponse(res, 200, { success: true });
         } else {
             sendResponse(res, 404, { error: 'Todo not found' });
@@ -920,6 +1038,8 @@ const server = http.createServer(async (req, res) => {
             }
             data.tasks.splice(index, 1);
             saveData(data);
+            // 任务被删除 → 失效其 SSO ticket
+            sso.invalidateByRef('task', id);
             sendResponse(res, 200, { success: true });
         } else {
             sendResponse(res, 404, { error: 'Task not found' });
@@ -936,7 +1056,16 @@ const server = http.createServer(async (req, res) => {
         if (index !== -1) {
             data.tasks[index] = { ...data.tasks[index], ...body, updated_at: new Date().toISOString() };
             saveData(data);
-            sendResponse(res, 200, data.tasks[index]);
+            // 任务被标记完成 → 失效其 SSO ticket，并级联失效其下所有待办的 ticket
+            // （方案 B：多次有效，完成才失效；待办链接常跳转到任务详情，故任务完成也应失效待办链接）
+            const updatedTask = data.tasks[index];
+            if (updatedTask.status === 'done' || updatedTask.status === 'completed' || updatedTask.status === '已完成') {
+                sso.invalidateByRef('task', id);
+                for (const td of (data.todos || [])) {
+                    if (td.taskId === id) sso.invalidateByRef('todo', td.id);
+                }
+            }
+            sendResponse(res, 200, updatedTask);
         } else {
             sendResponse(res, 404, { error: 'Task not found' });
         }

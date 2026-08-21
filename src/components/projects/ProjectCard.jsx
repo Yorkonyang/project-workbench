@@ -45,7 +45,7 @@ const REASONS = [
   '其他原因',
 ];
 
-export default function ProjectCard({ project, onEdit, onArchive, onRestore, onDelete, showArchive = true }) {
+export default function ProjectCard({ project, onEdit, onArchive, onRestore, onDelete, onCardClick, showArchive = true }) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [showArchiveRequest, setShowArchiveRequest] = useState(false);
   const [archiveReason, setArchiveReason] = useState('');
@@ -156,8 +156,9 @@ export default function ProjectCard({ project, onEdit, onArchive, onRestore, onD
   return (
     <>
       <div
+        onClick={() => onCardClick?.(project.id)}
         className={cn(
-          'bg-white rounded-xl border transition-smooth hover:shadow-md group relative',
+          'bg-white rounded-xl border transition-smooth hover:shadow-md group relative cursor-pointer',
           project.archived ? 'border-slate-200 opacity-75' : 'border-slate-200'
         )}
       >
@@ -194,7 +195,7 @@ export default function ProjectCard({ project, onEdit, onArchive, onRestore, onD
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             {(isAdmin || isOwner) && (
             <button
-              onClick={() => onEdit?.(project)}
+              onClick={(e) => { e.stopPropagation(); onEdit?.(project); }}
               className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-smooth"
               title="编辑"
             >
@@ -205,7 +206,8 @@ export default function ProjectCard({ project, onEdit, onArchive, onRestore, onD
             {/* 申请归档按钮（仅进行中项目可点击） */}
             {showArchive && !project.archived && !isRequested && (
               <button
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   if (canRequestArchive) {
                     setShowArchiveRequest(true);
                   }
@@ -226,7 +228,7 @@ export default function ProjectCard({ project, onEdit, onArchive, onRestore, onD
             {/* 审批归档按钮（管理员或待审批状态下显示） */}
             {isRequested && !project.archived && (
               <button
-                onClick={() => setShowArchiveActions(true)}
+                onClick={(e) => { e.stopPropagation(); setShowArchiveActions(true); }}
                 className="p-1.5 hover:bg-amber-50 rounded-lg text-amber-600 transition-smooth"
                 title="审批归档申请"
               >
@@ -237,7 +239,7 @@ export default function ProjectCard({ project, onEdit, onArchive, onRestore, onD
             {/* 已归档 */}
             {isArchived && (
               <button
-                onClick={handleRestore}
+                onClick={(e) => { e.stopPropagation(); handleRestore(); }}
                 className="p-1.5 hover:bg-green-50 rounded-lg text-slate-400 hover:text-green-600 transition-smooth"
                 title="恢复项目"
               >
@@ -248,7 +250,7 @@ export default function ProjectCard({ project, onEdit, onArchive, onRestore, onD
             {/* 删除按钮（管理员或项目所有者可见） */}
             {(isAdmin || isOwner) && (
               <button
-                onClick={() => setShowDeleteConfirm(true)}
+                onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(true); }}
                 className="p-1.5 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-600 transition-smooth"
                 title="永久删除项目"
               >

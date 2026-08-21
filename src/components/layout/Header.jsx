@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  Bell, Plus, Menu, Calendar as CalIcon, Settings, Download, Upload, RotateCcw,
+  Bell, Menu, Calendar as CalIcon, Settings, Download, Upload, RotateCcw,
   Clock, AlertCircle, Flag, Info, CheckCheck, ChevronRight, LogOut, UserCog,
   KeyRound,
 } from 'lucide-react';
@@ -31,7 +31,7 @@ const PAGE_TITLES = {
   '/reminder-settings': '提醒设置',
 };
 
-export default function Header({ onMenuClick, onQuickAdd }) {
+export default function Header({ onMenuClick }) {
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -54,6 +54,7 @@ export default function Header({ onMenuClick, onQuickAdd }) {
   const currentUserId = useAuthStore((s) => s.currentUserId);
   const logout = useAuthStore((s) => s.logout);
   const currentUser = members.find((m) => m.id === currentUserId);
+  const isAdmin = currentUser?.role === 'admin';
 
   const [showNotif, setShowNotif] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -209,15 +210,6 @@ export default function Header({ onMenuClick, onQuickAdd }) {
           )}
         </div>
 
-        {/* Quick Add */}
-        <button
-          onClick={onQuickAdd}
-          className="flex items-center gap-1.5 px-3 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 transition-smooth shadow-sm shadow-primary-500/20"
-        >
-          <Plus className="w-4 h-4" />
-          <span className="hidden sm:inline">新建</span>
-        </button>
-
         {/* Current User */}
         <div className="relative">
           <button
@@ -287,13 +279,15 @@ export default function Header({ onMenuClick, onQuickAdd }) {
                     <KeyRound className="w-4 h-4 text-slate-400" />
                     修改密码
                   </button>
-                  <button
-                    onClick={() => { navigate('/reminder-settings'); setShowUserMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-smooth"
-                  >
-                    <Bell className="w-4 h-4 text-slate-400" />
-                    提醒设置
-                  </button>
+                  {isAdmin && (
+                    <button
+                      onClick={() => { navigate('/reminder-settings'); setShowUserMenu(false); }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-smooth"
+                    >
+                      <Bell className="w-4 h-4 text-slate-400" />
+                      提醒设置
+                    </button>
+                  )}
                 </div>
 
                 {/* 数据管理 */}

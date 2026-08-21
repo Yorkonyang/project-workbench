@@ -87,9 +87,9 @@ export default function ProjectsPage() {
     setEditingProject(null);
   };
 
-  // 点击项目卡片跳转时间线
+  // 点击项目卡片跳转项目详情页（与任务管理入口保持一致）
   const handleCardClick = (projectId) => {
-    navigate(`/timeline?projectId=${projectId}`);
+    navigate(`/projects/${projectId}`);
   };
 
   // 申请归档

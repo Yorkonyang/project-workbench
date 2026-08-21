@@ -43,6 +43,8 @@ let pushConfig = loadPushConfig();
 // 确保结构完整
 pushConfig.baseUrl = pushConfig.baseUrl || '';
 pushConfig.qsourceId = pushConfig.qsourceId || '';
+// 前端可访问地址：责任人在轻流通知中点击链接时跳转到的地址（默认本地，需在生产环境配置为内网/公网地址）
+pushConfig.frontendBaseUrl = pushConfig.frontendBaseUrl || '';
 
 // ===== 同步配置（开放平台 OAuth） =====
 // 用于通过开放平台 API 同步组织架构和成员
@@ -430,6 +432,40 @@ function translateReminderType(v) {
     return REMINDER_TYPE_LABELS[v] || v;
 }
 
+// ===== 生成前端直达链接 =====
+// 责任人在轻流收到通知后，点击该链接可直接打开对应的任务详情（填写进度/关闭待办）。
+// frontendBaseUrl 缺省回退到本地地址，生产环境应在「BPM 推送集成」配置中填写实际可访问地址。
+// 若传入 email，则使用方案 B（ticket 替代邮箱）：
+//   - 推送时预签 ticket 存入 ticketStore；URL 只包含 ticket，不再含任何邮箱/userId/PII；
+//   - 链接 HMAC-SHA256(ticket|exp) 防篡改；
+//   - 用户点击时后端从 ticketStore 还原 userId/email → HttpOnly Cookie → 302；
+//   - ticket 与待办/任务关联（ref），多次有效；待办/任务完成或删除时后端主动失效。
+// @param {string} path   前端路径（如 /task/:id）
+// @param {string} email  责任人邮箱（无则回退普通链接）
+// @param {{type:'todo'|'task'|'milestone', id:string} | null} [ref] 关联的待办/任务
+function buildFrontendUrl(path, email, ref = null) {
+    const base = (pushConfig.frontendBaseUrl || 'http://localhost:5173').replace(/\/+$/, '');
+    const plain = `${base}${path}`;
+    if (!email) return plain;
+    try {
+        const sso = require('./auth');
+        // 邮箱 → 责任人 userId（必要：ticket 表里需要保存 userId 而非仅邮箱）
+        const member = db.getMemberByEmail(email);
+        if (!member) {
+            console.warn('[轻流推送] 未找到邮箱对应成员，回退普通链接:', email);
+            return plain;
+        }
+        // 预签 ticket（写入 ticketStore，关联 ref），并立刻生成签名 URL
+        const { ticket, expiresAt } = sso.issuePreTicket(member.id, member.email, ref);
+        const exp = Math.floor(expiresAt / 1000);
+        return sso.buildTicketUrl(base, '/api/auth/sso-link', ticket, exp, path);
+    } catch (e) {
+        // 签名失败时仍返回原链接（保留旧行为），便于排查
+        console.warn('[轻流推送] SSO ticket 签名失败，回退普通链接:', e.message);
+        return plain;
+    }
+}
+
 // ===== 推送（Q-Source，保持不变） =====
 async function notifyTaskCreated(task) {
     const assignee = db.getMemberById(task.assigneeId || task.assignee)
@@ -450,6 +486,10 @@ async function notifyTaskCreated(task) {
         ssxm: projectTitle,
         zht: translateStatus(task.status || '未开始'),
     };
+
+    // 任务直达链接（前端 /task/:taskId），便于责任人在轻流点击后跳转到项目工作台填写进度/关闭待办
+    // 带 SSO 签名（方案 B），责任人免登录直达；ticket 关联该任务，完成时失效
+    payload.taskUrl = buildFrontendUrl(`/task/${task.id}`, assigneeEmail, { type: 'task', id: task.id });
 
     console.log('[轻流推送] 任务通知:', payload);
     return await sendToQSource(payload);
@@ -474,6 +514,18 @@ async function notifyTodoCreated(todo) {
         ssxm: projectTitle,
         zht: translateStatus(todo.status || '未开始'),
     };
+
+    // 待办直达链接三档兜底：① 关联任务 → 任务详情（可在弹窗里关待办）
+    // ② 归属项目 → 项目详情 ③ 无任何归属 → 待办自身详情（新建 /todo/:todoId 直达页）
+    let todoLink;
+    if (todo.taskId) {
+        todoLink = `/task/${todo.taskId}`;
+    } else if (todo.projectId) {
+        todoLink = `/projects/${todo.projectId}`;
+    } else {
+        todoLink = `/todo/${todo.id}`;
+    }
+    payload.taskUrl = buildFrontendUrl(todoLink, assigneeEmail, { type: 'todo', id: todo.id });
 
     console.log('[轻流推送] 待办通知:', payload);
     return await sendToQSource(payload);
@@ -561,6 +613,19 @@ async function notifyOverdue(notification) {
     const project = db.getProjectById(projectId);
     const projectTitle = project?.name || '项目工作台';
 
+    // 直达链接兜底：① 任务 → 任务详情 ② 待办（关联任务 → 任务详情；纯待办 → 待办详情）
+    // ③ 里程碑 / 兜底 → 项目详情
+    let linkPath = projectId ? `/projects/${projectId}` : '/';
+    if (relatedType === 'task') {
+        linkPath = `/task/${relatedId}`;
+    } else if (relatedType === 'todo') {
+        linkPath = item.taskId ? `/task/${item.taskId}` : `/todo/${relatedId}`;
+    }
+
+    // 签名给第一个责任人邮箱（多人时只签第一个；assigneeEmail 字段仍保留全部分号拼接的多值）。
+    // SSO 链接是单签名的，先点开链接的人先进入；其他人后续也会收到通知。
+    const signEmail = emails[0] || '';
+
     const payload = {
         bt: title,          // 标题
         ms: description,    // 描述
@@ -571,6 +636,7 @@ async function notifyOverdue(notification) {
         zht: translateStatus(status),          // 状态（中文）
         yqts: overdueDays,  // 逾期天数（新增字段）
         txlx: translateReminderType(type),     // 提醒类型（中文）：逾期提醒 / 催办提醒
+        taskUrl: buildFrontendUrl(linkPath, signEmail, { type: relatedType, id: relatedId }),   // 直达链接：责任人点击后跳转填写进度/关闭待办
     };
 
     console.log('[轻流推送] 逾期通知:', payload);
@@ -628,6 +694,7 @@ async function addFormData(formData) {
 }
 
 module.exports = {
+    buildFrontendUrl,
     getPushConfig,
     setPushConfig,
     getSyncConfig,

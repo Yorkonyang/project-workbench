@@ -15,6 +15,7 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { usePermissions } from '@/hooks/usePermissions';
 import { cn } from '@/lib/utils';
 import { ROLES } from '@/config/permissions';
+import { AVATAR_COLORS } from '@/config/theme';
 
 export default function MembersPage() {
   const [activeTab, setActiveTab] = useState('members'); // 'members' | 'organization'
@@ -25,6 +26,14 @@ export default function MembersPage() {
   const fetchDepartments = useOrgStore((s) => s.fetchDepartments);
   const allDepts = useOrgStore((s) => s.getAllDepartments());
   const getDeptName = useOrgStore((s) => s.getDeptName);
+
+  // 部门颜色映射：按全局扁平顺序（DFS 前序）循环缺省头像色
+  const deptColorMap = useMemo(() => {
+    const map = new Map();
+    allDepts.forEach((d, i) => map.set(d.id, AVATAR_COLORS[i % AVATAR_COLORS.length]));
+    return map;
+  }, [allDepts]);
+
   const resetPassword = useAuthStore((s) => s.resetPassword);
   const currentUserId = useAuthStore((s) => s.currentUserId);
   const currentUserRole = useMemberStore((s) => s.members.find((m) => m.id === currentUserId)?.role);
@@ -226,6 +235,7 @@ export default function MembersPage() {
                     ...member,
                     department: member.departmentId ? getDeptName(member.departmentId) : member.department,
                   }}
+                  deptColor={member.departmentId ? deptColorMap.get(member.departmentId) : undefined}
                   onEdit={handleEdit}
                   onDelete={setDeleteTarget}
                   onResetPassword={handleResetPassword}
@@ -276,7 +286,7 @@ export default function MembersPage() {
                         >
                           <div
                             className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-                            style={{ backgroundColor: m.avatarColor || '#6366f1' }}
+                            style={{ backgroundColor: deptColorMap.get(m.departmentId) || m.avatarColor || '#6366f1' }}
                           >
                             {m.name?.charAt(0) || '？'}
                           </div>

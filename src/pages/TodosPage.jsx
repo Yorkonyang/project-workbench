@@ -6,7 +6,7 @@ import StatCard from '@/components/ui/StatCard';
 import TodoList from '@/components/todos/TodoList';
 import TaskList from '@/components/tasks/TaskList';
 import TodoForm from '@/components/todos/TodoForm';
-import TaskDetailModal from '@/components/tasks/TaskDetailModal';
+import TaskProgressModal from '@/components/tasks/TaskProgressModal';
 import ReminderBanner from '@/components/todos/ReminderBanner';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { useTodoStore } from '@/store/useTodoStore';
@@ -236,8 +236,9 @@ export default function TodosPage() {
       )}
 
       {progressTask && (
-        <TaskDetailModal
+        <TaskProgressModal
           task={progressTask}
+          projects={projects}
           onClose={handleCloseProgress}
         />
       )}
