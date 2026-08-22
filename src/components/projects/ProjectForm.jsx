@@ -140,39 +140,21 @@ export default function ProjectForm({ project, onClose, onSave }) {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">
-              项目类型 <span className="text-primary-500 text-xs">(来自数据字典)</span>
-            </label>
-            <select
-              name="typeId"
-              value={typeId}
-              onChange={handleTypeChange}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-smooth bg-white"
-            >
-              <option value="">请选择项目类型</option>
-              {projectTypes.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">
-              隶属项目 <span className="text-primary-500 text-xs">(可选，支持创建子项目)</span>
-            </label>
-            <select
-              name="parentProjectId"
-              value={formData.parentProjectId || ''}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-smooth bg-white"
-            >
-              <option value="">无（顶级项目）</option>
-              {parentOptions.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}（{p.code}）</option>
-              ))}
-            </select>
-          </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1.5">
+            项目类型 <span className="text-primary-500 text-xs">(来自数据字典)</span>
+          </label>
+          <select
+            name="typeId"
+            value={typeId}
+            onChange={handleTypeChange}
+            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-smooth bg-white"
+          >
+            <option value="">请选择项目类型</option>
+            {projectTypes.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
