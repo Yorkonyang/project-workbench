@@ -471,10 +471,10 @@ export default function GanttView({ tasks, milestones, projects }) {
                                     <div
                                       className="absolute bg-green-500 z-20"
                                       style={{
-                                        left: segRight - LINE_W,
-                                        top: ACTUAL_CENTER - LINE_W,
-                                        width: LINE_W * 2,
-                                        height: LINE_W * 2,
+                                        left: segRight - (LINE_W + 2) / 2,
+                                        top: ACTUAL_CENTER - (LINE_W + 2) / 2,
+                                        width: LINE_W + 2,
+                                        height: LINE_W + 2,
                                         borderRadius: '50%',
                                       }}
                                       title="任务已完成"
@@ -501,10 +501,10 @@ export default function GanttView({ tasks, milestones, projects }) {
                               <div
                                 className="absolute bg-green-500 z-20"
                                 style={{
-                                  left: actualLeft - LINE_W,
-                                  top: ACTUAL_CENTER - LINE_W,
-                                  width: LINE_W * 2,
-                                  height: LINE_W * 2,
+                                  left: actualLeft - (LINE_W + 2) / 2,
+                                  top: ACTUAL_CENTER - (LINE_W + 2) / 2,
+                                  width: LINE_W + 2,
+                                  height: LINE_W + 2,
                                   borderRadius: '50%',
                                 }}
                                 title="任务已完成"
