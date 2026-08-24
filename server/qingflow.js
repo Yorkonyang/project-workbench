@@ -487,9 +487,8 @@ async function notifyTaskCreated(task) {
         zht: translateStatus(task.status || '未开始'),
     };
 
-    // 任务直达链接（前端 /task/:taskId），便于责任人在轻流点击后跳转到项目工作台填写进度/关闭待办
-    // 带 SSO 签名（方案 B），责任人免登录直达；ticket 关联该任务，完成时失效
-    payload.taskUrl = buildFrontendUrl(`/task/${task.id}`, assigneeEmail, { type: 'task', id: task.id });
+    // 任务直达链接（前端项目管理界面 /），带 SSO 签名（方案 B），责任人免登录直达；ticket 关联该任务，完成时失效
+    payload.taskUrl = buildFrontendUrl('/', assigneeEmail, { type: 'task', id: task.id });
 
     console.log('[轻流推送] 任务通知:', payload);
     return await sendToQSource(payload);
@@ -515,17 +514,8 @@ async function notifyTodoCreated(todo) {
         zht: translateStatus(todo.status || '未开始'),
     };
 
-    // 待办直达链接三档兜底：① 关联任务 → 任务详情（可在弹窗里关待办）
-    // ② 归属项目 → 项目详情 ③ 无任何归属 → 待办自身详情（新建 /todo/:todoId 直达页）
-    let todoLink;
-    if (todo.taskId) {
-        todoLink = `/task/${todo.taskId}`;
-    } else if (todo.projectId) {
-        todoLink = `/projects/${todo.projectId}`;
-    } else {
-        todoLink = `/todo/${todo.id}`;
-    }
-    payload.taskUrl = buildFrontendUrl(todoLink, assigneeEmail, { type: 'todo', id: todo.id });
+    // 待办直达链接：统一指向项目管理界面 /，带 SSO 签名；ticket 关联该待办，完成时失效
+    payload.taskUrl = buildFrontendUrl('/', assigneeEmail, { type: 'todo', id: todo.id });
 
     console.log('[轻流推送] 待办通知:', payload);
     return await sendToQSource(payload);

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Plus, Archive, RotateCcw, FileText, Check, X } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Plus, Archive, RotateCcw, FileText, Check, X, ChevronRight, ChevronDown, Edit2, Trash2, ExternalLink, CheckSquare } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Button from '@/components/ui/Button';
 import ProjectForm from '@/components/projects/ProjectForm';
@@ -8,8 +8,24 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
-import { cn } from '@/lib/utils';
+import { useTaskStore } from '@/store/useTaskStore';
+import { useTodoStore } from '@/store/useTodoStore';
+import { cn, isOverdue, dueDateLabel, getProjectStatusConfig } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
+import TaskProgressModal from '@/components/tasks/TaskProgressModal';
+
+const TASK_STATUS_LABEL = { todo: '待开始', in_progress: '进行中', review: '审核中', done: '已完成', blocked: '阻塞' };
+const TASK_STATUS_COLOR = { todo: '#9ca3af', in_progress: '#378ADD', review: '#8b5cf6', done: '#1D9E75', blocked: '#ef4444' };
+
+function StatusBadge({ status, kind = 'project' }) {
+  if (kind === 'project') {
+    const cfg = getProjectStatusConfig(status);
+    return <span className={`text-xs px-2 py-0.5 rounded-full ${cfg.bgClass} ${cfg.textClass}`}>{cfg.label}</span>;
+  }
+  const label = TASK_STATUS_LABEL[status] || status;
+  const color = TASK_STATUS_COLOR[status] || '#9ca3af';
+  return <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: `${color}1a`, color }}>{label}</span>;
+}
 
 export default function ProjectsPage() {
   const navigate = useNavigate();
@@ -34,6 +50,38 @@ export default function ProjectsPage() {
   const currentUserId = useAuthStore((s) => s.currentUserId);
   const members = useAuthStore((s) => s.members || []);
   const addNotification = useNotificationStore((s) => s.addNotification);
+
+  const tasks = useTaskStore((s) => s.tasks);
+  const todos = useTodoStore((s) => s.todos);
+
+  // 按 projectId 分组 tasks
+  const tasksByProject = useMemo(() => {
+    const map = {};
+    (tasks || []).forEach((t) => {
+      if (!map[t.projectId]) map[t.projectId] = [];
+      map[t.projectId].push(t);
+    });
+    return map;
+  }, [tasks]);
+
+  // 按 taskId 分组 todos
+  const todosByTask = useMemo(() => {
+    const map = {};
+    (todos || []).forEach((t) => {
+      if (t.taskId) {
+        if (!map[t.taskId]) map[t.taskId] = [];
+        map[t.taskId].push(t);
+      }
+    });
+    return map;
+  }, [todos]);
+
+  // 默认展开所有项目（任务层可见），待办层默认收起
+  const [expandedProjects, setExpandedProjects] = useState({});
+  const [expandedTasks, setExpandedTasks] = useState({});
+  const [editingTask, setEditingTask] = useState(null);
+
+  const toggleTodo = useTodoStore((s) => s.toggleTodo);
 
   const isAdmin = members.some((m) => m.id === currentUserId && m.role === 'admin');
 
@@ -253,53 +301,239 @@ export default function ProjectsPage() {
         )}
       </div>
 
-      {/* Project Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {showPending
-          ? pendingArchiveProjects.map((project) => (
-              <ProjectCard
-                key={project.id}
-                project={project}
-                onEdit={handleEdit}
-                showArchive={false}
-                onArchiveRequest={() => handleArchiveRequest(project)}
-                onApprove={() => handleApprove(project)}
-                onReject={() => handleReject(project)}
-                onCardClick={() => handleCardClick(project.id)}
-                onDelete={handleDelete}
-              />
-            ))
-          : (showArchived ? filteredArchived : filteredActive).map((project) => (
-              <ProjectCard
-                key={project.id}
-                project={project}
-                onEdit={handleEdit}
-                onArchive={() => setShowArchived(false)}
-                onRestore={() => handleRestore(project)}
-                showArchive={!project.archived}
-                onCardClick={() => handleCardClick(project.id)}
-                onDelete={handleDelete}
-              />
-            ))
-        }
-      </div>
+      {/* 三级层级：项目→任务→待办 */}
+      {showPending ? (
+        /* 待审批 — 卡片网格 */
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {pendingArchiveProjects.map((project) => (
+            <ProjectCard
+              key={project.id}
+              project={project}
+              onEdit={handleEdit}
+              showArchive={false}
+              onArchiveRequest={() => handleArchiveRequest(project)}
+              onApprove={() => handleApprove(project)}
+              onReject={() => handleReject(project)}
+              onCardClick={() => handleCardClick(project.id)}
+              onDelete={handleDelete}
+            />
+          ))}
+        </div>
+      ) : showArchived ? (
+        /* 归档 — 卡片网格 */
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filteredArchived.map((project) => (
+            <ProjectCard
+              key={project.id}
+              project={project}
+              onEdit={handleEdit}
+              onArchive={() => setShowArchived(false)}
+              onRestore={() => handleRestore(project)}
+              showArchive={!project.archived}
+              onCardClick={() => handleCardClick(project.id)}
+              onDelete={handleDelete}
+            />
+          ))}
+        </div>
+      ) : (
+        /* 活跃项目 — 三级层级视图 */
+        <div className="space-y-2">
+          {filteredActive.map((project) => {
+            const projectTasks = tasksByProject[project.id] || [];
+            const isProjectExpanded = expandedProjects[project.id] !== false; // 默认展开
+            const taskTotal = projectTasks.length;
+            const taskDone = projectTasks.filter((t) => t.status === 'done').length;
 
-      {((showArchived ? filteredArchived : showPending ? pendingArchiveProjects : filteredActive).length === 0) && (
+            return (
+              <div key={project.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                {/* ── 第一层：项目行 ── */}
+                <div
+                  className="flex items-center gap-2.5 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-smooth"
+                  onClick={() =>
+                    setExpandedProjects((prev) => ({ ...prev, [project.id]: !isProjectExpanded }))
+                  }
+                >
+                  <button className="text-slate-400 hover:text-slate-600 shrink-0">
+                    {isProjectExpanded ? (
+                      <ChevronDown className="w-4 h-4" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4" />
+                    )}
+                  </button>
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: project.color }}
+                  />
+                  <span className="text-xs text-slate-400 font-mono shrink-0">{project.code}</span>
+                  <span className="font-medium text-slate-800 flex-1 truncate">{project.name}</span>
+                  <StatusBadge status={project.status} />
+                  {taskTotal > 0 && (
+                    <span className="text-xs text-slate-400 whitespace-nowrap">
+                      {taskDone}/{taskTotal} 任务
+                    </span>
+                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/projects/${project.id}`);
+                    }}
+                    className="p-1.5 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-600 shrink-0"
+                    title="进入项目详情"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* ── 第二层：任务列表 ── */}
+                {isProjectExpanded && (
+                  <div className="border-t border-slate-100">
+                    {projectTasks.length === 0 ? (
+                      <div className="px-4 py-3 pl-12 text-xs text-slate-400">暂无任务</div>
+                    ) : (
+                      projectTasks.map((task) => {
+                        const taskTodos = todosByTask[task.id] || [];
+                        const isTaskExpanded = !!expandedTasks[task.id]; // 默认收起
+                        const todoDone = taskTodos.filter((t) => t.done).length;
+
+                        return (
+                          <div key={task.id}>
+                            {/* 任务行：点击箭头展开/折叠待办，点击主体弹出进度汇报 */}
+                            <div className="flex items-stretch border-b border-slate-50 last:border-b-0">
+                              {/* 展开/折叠箭头 */}
+                              <div
+                                className="flex items-center pl-12 pr-1 cursor-pointer hover:bg-slate-50 transition-smooth shrink-0"
+                                onClick={() =>
+                                  setExpandedTasks((prev) => ({
+                                    ...prev,
+                                    [task.id]: !isTaskExpanded,
+                                  }))
+                                }
+                              >
+                                <button className="text-slate-400 hover:text-slate-600">
+                                  {isTaskExpanded ? (
+                                    <ChevronDown className="w-3 h-3" />
+                                  ) : (
+                                    <ChevronRight className="w-3 h-3" />
+                                  )}
+                                </button>
+                              </div>
+                              {/* 任务主体：点击弹出进度汇报 */}
+                              <div
+                                className="flex items-center gap-2.5 px-2 py-2.5 flex-1 cursor-pointer hover:bg-slate-50 transition-smooth min-w-0"
+                                onClick={() => setEditingTask(task)}
+                              >
+                                <span className="text-sm text-slate-700 flex-1 truncate">
+                                  {task.title}
+                                </span>
+                                <StatusBadge status={task.status} kind="task" />
+                                {task.assignedTo && (
+                                  <span className="text-xs text-slate-400 truncate max-w-[100px]">
+                                    {task.assignedTo}
+                                  </span>
+                                )}
+                                {taskTodos.length > 0 && (
+                                  <span className="text-xs text-slate-400 whitespace-nowrap">
+                                    {todoDone}/{taskTodos.length} 待办
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* ── 第三层：待办列表 ── */}
+                            {isTaskExpanded && taskTodos.length > 0 && (
+                              <div className="bg-slate-50">
+                                {taskTodos.map((todo) => {
+                                  const overdue = todo.dueDate && !todo.done && isOverdue(todo.dueDate);
+                                  return (
+                                    <div
+                                      key={todo.id}
+                                      className="flex items-center gap-2.5 px-4 py-2 pl-20 border-b border-slate-100 last:border-b-0"
+                                    >
+                                      {/* 圆形 checkbox：未完成时空心，完成后绿色带白勾 */}
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleTodo(todo.id);
+                                        }}
+                                        className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors"
+                                        style={{
+                                          backgroundColor: todo.done ? '#22c55e' : 'transparent',
+                                          borderColor: todo.done ? '#22c55e' : '#d1d5db',
+                                        }}
+                                      >
+                                        {todo.done && <Check className="w-3 h-3 text-white" />}
+                                      </button>
+                                      <span
+                                        className={`text-sm flex-1 truncate ${
+                                          todo.done
+                                            ? 'text-slate-400 line-through'
+                                            : 'text-slate-600'
+                                        }`}
+                                      >
+                                        {todo.title}
+                                      </span>
+                                      {todo.dueDate && (
+                                        <span
+                                          className={`text-xs whitespace-nowrap ${
+                                            overdue
+                                              ? 'text-red-500 font-medium'
+                                              : 'text-slate-400'
+                                          }`}
+                                        >
+                                          {dueDateLabel(todo.dueDate)}
+                                        </span>
+                                      )}
+                                      <span
+                                        className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${
+                                          todo.done
+                                            ? 'text-green-600 bg-green-50'
+                                            : 'text-amber-600 bg-amber-50'
+                                        }`}
+                                      >
+                                        {todo.done ? '已完成' : '待办'}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 空状态 */}
+      {showPending && pendingArchiveProjects.length === 0 && (
         <div className="text-center py-16 text-slate-400">
           <Archive className="w-12 h-12 mx-auto mb-3 opacity-50" />
-          <p className="text-sm">
-            {showPending ? '暂无待审批的归档申请' : showArchived ? '暂无已归档项目' : '暂无进行中的项目'}
-          </p>
-          {!showArchived && !showPending && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-3"
-              onClick={() => { setEditingProject(null); setShowForm(true); }}
-            >
-              <Plus className="w-4 h-4" /> 新建第一个项目
-            </Button>
-          )}
+          <p className="text-sm">暂无待审批的归档申请</p>
+        </div>
+      )}
+      {showArchived && filteredArchived.length === 0 && (
+        <div className="text-center py-16 text-slate-400">
+          <Archive className="w-12 h-12 mx-auto mb-3 opacity-50" />
+          <p className="text-sm">暂无已归档项目</p>
+        </div>
+      )}
+      {!showPending && !showArchived && filteredActive.length === 0 && (
+        <div className="text-center py-16 text-slate-400">
+          <Archive className="w-12 h-12 mx-auto mb-3 opacity-50" />
+          <p className="text-sm">暂无进行中的项目</p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={() => { setEditingProject(null); setShowForm(true); }}
+          >
+            <Plus className="w-4 h-4" /> 新建第一个项目
+          </Button>
         </div>
       )}
 
@@ -353,6 +587,15 @@ export default function ProjectsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 任务进度汇报弹窗 */}
+      {editingTask && (
+        <TaskProgressModal
+          task={editingTask}
+          projects={projects}
+          onClose={() => setEditingTask(null)}
+        />
       )}
     </PageContainer>
   );
