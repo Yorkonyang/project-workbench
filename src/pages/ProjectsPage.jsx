@@ -422,7 +422,7 @@ export default function ProjectsPage() {
                                 className="flex items-center gap-2.5 px-2 py-2.5 flex-1 cursor-pointer hover:bg-slate-50 transition-smooth min-w-0"
                                 onClick={() => setEditingTask(task)}
                               >
-                                <span className="text-sm text-slate-700 flex-1 truncate">
+                                <span className="text-sm text-slate-700 flex-1 truncate" style={{ fontFamily: 'SimHei, "Microsoft YaHei", sans-serif' }}>
                                   {task.title}
                                 </span>
                                 <StatusBadge status={task.status} kind="task" />
@@ -443,7 +443,7 @@ export default function ProjectsPage() {
                             {isTaskExpanded && taskTodos.length > 0 && (
                               <div className="bg-slate-50">
                                 {taskTodos.map((todo) => {
-                                  const overdue = todo.dueDate && !todo.done && isOverdue(todo.dueDate);
+                                  const overdue = todo.dueDate && !todo.completed && isOverdue(todo.dueDate);
                                   return (
                                     <div
                                       key={todo.id}
@@ -457,15 +457,15 @@ export default function ProjectsPage() {
                                         }}
                                         className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors"
                                         style={{
-                                          backgroundColor: todo.done ? '#22c55e' : 'transparent',
-                                          borderColor: todo.done ? '#22c55e' : '#d1d5db',
+                                          backgroundColor: todo.completed ? '#22c55e' : 'transparent',
+                                          borderColor: todo.completed ? '#22c55e' : '#d1d5db',
                                         }}
                                       >
-                                        {todo.done && <Check className="w-3 h-3 text-white" />}
+                                        {todo.completed && <Check className="w-3 h-3 text-white" />}
                                       </button>
                                       <span
                                         className={`text-sm flex-1 truncate ${
-                                          todo.done
+                                          todo.completed
                                             ? 'text-slate-400 line-through'
                                             : 'text-slate-600'
                                         }`}
@@ -485,12 +485,12 @@ export default function ProjectsPage() {
                                       )}
                                       <span
                                         className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${
-                                          todo.done
+                                          todo.completed
                                             ? 'text-green-600 bg-green-50'
                                             : 'text-amber-600 bg-amber-50'
                                         }`}
                                       >
-                                        {todo.done ? '已完成' : '待办'}
+                                        {todo.completed ? '已完成' : '待办'}
                                       </span>
                                     </div>
                                   );
