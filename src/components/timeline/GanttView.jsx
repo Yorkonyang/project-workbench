@@ -475,7 +475,7 @@ export default function GanttView({ tasks, milestones, projects }) {
                                         top: ACTUAL_CENTER - LINE_W,
                                         width: LINE_W * 2,
                                         height: LINE_W * 2,
-                                        borderRadius: 2,
+                                        borderRadius: '50%',
                                       }}
                                       title="任务已完成"
                                     />
@@ -496,7 +496,7 @@ export default function GanttView({ tasks, milestones, projects }) {
                               );
                             })}
 
-                            {/* 已完成但无进度汇报：在起点画绿色实心方块 */}
+                            {/* 已完成但无进度汇报：在起点画绿色实心圆 */}
                             {isDone && reportsSorted.length === 0 && (
                               <div
                                 className="absolute bg-green-500 z-20"
@@ -505,7 +505,7 @@ export default function GanttView({ tasks, milestones, projects }) {
                                   top: ACTUAL_CENTER - LINE_W,
                                   width: LINE_W * 2,
                                   height: LINE_W * 2,
-                                  borderRadius: 2,
+                                  borderRadius: '50%',
                                 }}
                                 title="任务已完成"
                               />
