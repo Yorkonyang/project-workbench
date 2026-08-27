@@ -23,6 +23,10 @@ export const DEFAULT_REMINDER_CONFIG = {
   milestonePreDays: [14, 7, 3, 1],
   // 提醒时间（每天几点检查到期项）
   dailyCheckHour: 8,
+  // 是否启用停滞任务检测
+  enableStalled: true,
+  // 任务超过多少天未更新则触发风险提示（实际严重程度由引擎根据天数动态判断）
+  stalledDays: 1,
 };
 
 export const useReminderConfigStore = create(

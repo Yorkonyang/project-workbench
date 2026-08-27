@@ -13,6 +13,7 @@ import { useTodoStore } from '@/store/useTodoStore';
 import { cn, isOverdue, dueDateLabel, getProjectStatusConfig } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
 import TaskProgressModal from '@/components/tasks/TaskProgressModal';
+import TaskForm from '@/components/tasks/TaskForm';
 
 const TASK_STATUS_LABEL = { todo: '待开始', in_progress: '进行中', review: '审核中', done: '已完成', blocked: '阻塞' };
 const TASK_STATUS_COLOR = { todo: '#9ca3af', in_progress: '#378ADD', review: '#8b5cf6', done: '#1D9E75', blocked: '#ef4444' };
@@ -38,6 +39,9 @@ export default function ProjectsPage() {
   const [archiveNote, setArchiveNote] = useState('');
   const [pendingArchiveProject, setPendingArchiveProject] = useState(null);
   const [showArchiveForm, setShowArchiveForm] = useState(false);
+  // 新建任务弹窗：绑定项目（点击项目标题区域打开，自动关联该项目）
+  const [showTaskForm, setShowTaskForm] = useState(false);
+  const [taskFormProjectId, setTaskFormProjectId] = useState('');
 
   const projects = useProjectStore((s) => s.projects);
   const addProject = useProjectStore((s) => s.addProject);
@@ -347,31 +351,47 @@ export default function ProjectsPage() {
             return (
               <div key={project.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden">
                 {/* ── 第一层：项目行 ── */}
-                <div
-                  className="flex items-center gap-2.5 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-smooth"
-                  onClick={() =>
-                    setExpandedProjects((prev) => ({ ...prev, [project.id]: !isProjectExpanded }))
-                  }
-                >
-                  <button className="text-slate-400 hover:text-slate-600 shrink-0">
+                <div className="flex items-center gap-2.5 px-4 py-3">
+                  {/* 左端展开/折叠按钮：只控制任务列表显隐 */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExpandedProjects((prev) => ({ ...prev, [project.id]: !isProjectExpanded }));
+                    }}
+                    className="text-slate-400 hover:text-slate-600 shrink-0 p-0.5 rounded hover:bg-slate-200 transition-smooth"
+                    title={isProjectExpanded ? '收起任务' : '展开任务'}
+                  >
                     {isProjectExpanded ? (
                       <ChevronDown className="w-4 h-4" />
                     ) : (
                       <ChevronRight className="w-4 h-4" />
                     )}
                   </button>
-                  <span
-                    className="w-2.5 h-2.5 rounded-full shrink-0"
-                    style={{ backgroundColor: project.color }}
-                  />
-                  <span className="text-xs text-slate-400 font-mono shrink-0">{project.code}</span>
-                  <span className="font-medium text-slate-800 flex-1 truncate">{project.name}</span>
-                  <StatusBadge status={project.status} />
-                  {taskTotal > 0 && (
-                    <span className="text-xs text-slate-400 whitespace-nowrap">
-                      {taskDone}/{taskTotal} 任务
+                  {/* 项目圆点 + 标题区域：点击打开新建任务弹窗（自动关联该项目） */}
+                  <button
+                    onClick={() => {
+                      setTaskFormProjectId(project.id);
+                      setShowTaskForm(true);
+                    }}
+                    className="flex items-center gap-2.5 flex-1 min-w-0 text-left group hover:bg-slate-50 rounded-lg px-1 py-0.5 transition-smooth"
+                    title="点击为该项目新建任务"
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: project.color }}
+                    />
+                    <span className="text-xs text-slate-400 font-mono shrink-0">{project.code}</span>
+                    <span className="font-medium text-slate-800 flex-1 truncate group-hover:text-primary-600">
+                      {project.name}
                     </span>
-                  )}
+                    <StatusBadge status={project.status} />
+                    {taskTotal > 0 && (
+                      <span className="text-xs text-slate-400 whitespace-nowrap">
+                        {taskDone}/{taskTotal} 任务
+                      </span>
+                    )}
+                  </button>
+                  {/* 最右端：进入项目详情 */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -542,6 +562,14 @@ export default function ProjectsPage() {
           project={editingProject}
           onClose={handleCloseForm}
           onSave={handleSave}
+        />
+      )}
+
+      {/* 新建任务弹窗：点击项目标题区域打开，自动关联该项目 */}
+      {showTaskForm && (
+        <TaskForm
+          defaultProjectId={taskFormProjectId}
+          onClose={() => setShowTaskForm(false)}
         />
       )}
 

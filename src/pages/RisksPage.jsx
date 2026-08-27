@@ -5,8 +5,12 @@ import Button from '@/components/ui/Button';
 import RiskMatrix from '@/components/risks/RiskMatrix';
 import RiskList from '@/components/risks/RiskList';
 import RiskForm from '@/components/risks/RiskForm';
+import TaskProgressModal from '@/components/tasks/TaskProgressModal';
+import TodoForm from '@/components/todos/TodoForm';
 import { useRiskStore } from '@/store/useRiskStore';
 import { useProjectStore } from '@/store/useProjectStore';
+import { useTaskStore } from '@/store/useTaskStore';
+import { useTodoStore } from '@/store/useTodoStore';
 
 export default function RisksPage() {
   const risks = useRiskStore((s) => s.risks);
@@ -14,13 +18,17 @@ export default function RisksPage() {
   const updateRisk = useRiskStore((s) => s.updateRisk);
   const deleteRisk = useRiskStore((s) => s.deleteRisk);
   const projects = useProjectStore((s) => s.projects);
+  const tasks = useTaskStore((s) => s.tasks);
+  const todos = useTodoStore((s) => s.todos);
 
   const [showForm, setShowForm] = useState(false);
   const [editingRisk, setEditingRisk] = useState(null);
+  const [openDetail, setOpenDetail] = useState(null);
 
-  // Filter out archived projects
   const activeProjectIds = new Set(projects.filter((p) => !p.archived).map((p) => p.id));
-  const activeRisks = risks.filter((r) => activeProjectIds.has(r.projectId) || !r.projectId);
+  const activeRisks = risks
+    .filter((r) => activeProjectIds.has(r.projectId) || !r.projectId)
+    .filter((r) => r.status !== 'closed');
 
   const stats = useMemo(() => ({
     total: activeRisks.length,
@@ -39,6 +47,23 @@ export default function RisksPage() {
     setShowForm(false);
     setEditingRisk(null);
   };
+
+  const handleOpenDetail = (risk) => {
+    setOpenDetail(risk);
+  };
+
+  const handleCloseDetail = () => {
+    setOpenDetail(null);
+  };
+
+  // 根据 sourceType 找到关联的任务或待办
+  const sourceItem = openDetail
+    ? (openDetail.sourceType?.startsWith('todo')
+        ? todos.find((t) => t.id === openDetail.sourceId)
+        : tasks.find((t) => t.id === openDetail.sourceId))
+    : null;
+
+  const isOpen = !!openDetail;
 
   return (
     <PageContainer
@@ -101,7 +126,7 @@ export default function RisksPage() {
 
       {/* Risk Matrix */}
       <div className="mb-6">
-        <RiskMatrix risks={activeRisks} />
+        <RiskMatrix risks={activeRisks} onOpenRisk={handleOpenDetail} />
       </div>
 
       {/* Risk List */}
@@ -114,6 +139,7 @@ export default function RisksPage() {
             deleteRisk(id);
           }
         }}
+        onOpen={handleOpenDetail}
       />
 
       {/* Form */}
@@ -123,6 +149,24 @@ export default function RisksPage() {
           projects={projects.filter((p) => !p.archived)}
           onClose={handleCloseForm}
         />
+      )}
+
+      {/* Detail Modal */}
+      {isOpen && sourceItem && (
+        <>
+          {openDetail.sourceType?.startsWith('todo') ? (
+            <TodoForm
+              todo={sourceItem}
+              onClose={handleCloseDetail}
+            />
+          ) : (
+            <TaskProgressModal
+              task={sourceItem}
+              onClose={handleCloseDetail}
+              projects={projects.filter((p) => !p.archived)}
+            />
+          )}
+        </>
       )}
     </PageContainer>
   );

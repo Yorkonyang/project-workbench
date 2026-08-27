@@ -7,6 +7,9 @@ import { useNotificationStore } from '@/store/useNotificationStore';
 import { useReminderConfigStore } from '@/store/useReminderConfigStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useMemberStore } from '@/store/useMemberStore';
+import { useRiskStore } from '@/store/useRiskStore';
+import { apiClient } from '@/lib/apiClient';
+import { autoCloseRelatedRisks } from './useAutoCloseRisks';
 
 /**
  * 提醒引擎 Hook
@@ -19,11 +22,111 @@ export function useReminderEngine() {
   const milestones = useMilestoneStore((s) => s.milestones);
   const projects = useProjectStore((s) => s.projects);
   const members = useMemberStore((s) => s.members);
+  const risks = useRiskStore((s) => s.risks);
   const addNotification = useNotificationStore((s) => s.addNotification);
   const notifications = useNotificationStore((s) => s.notifications);
   const config = useReminderConfigStore((s) => s.config);
   const configRef = useRef(config);
   configRef.current = config;
+
+  // 根据逾期天数动态计算风险严重程度
+  const getSeverityFromOverdueDays = (overdueDays) => {
+    if (overdueDays >= 7) return 'critical';
+    if (overdueDays >= 3) return 'high';
+    return 'medium';
+  };
+
+  // 统一确保某条任务/待办存在对应风险记录（逾期 + 停滞合并为一条，sourceType 组合）
+  const ensureRiskExists = useCallback(async (sourceId, typeLabel, title, projectId, overdueDays, stalledDays) => {
+    const cfg = configRef.current;
+    const baseType = typeLabel === 'todo' ? 'todo' : 'task';
+    const needsStalled = stalledDays !== undefined && stalledDays >= cfg.stalledDays;
+    const sourceType = needsStalled ? `${baseType}_stalled` : baseType;
+
+    // 以 API 为唯一事实源做去重
+    let apiRisks = [];
+    try { apiRisks = await apiClient.getRisks(); } catch (_) { /* 离线时降级 */ }
+    const apiExisting = apiRisks.find(
+      (r) => r.sourceId === sourceId && r.status !== 'closed'
+    );
+    if (apiExisting) {
+      // 已存在则更新标题/描述以反映最新状态
+      const needsOverdue = overdueDays !== undefined;
+      const needsStalledNow = stalledDays !== undefined && stalledDays >= cfg.stalledDays;
+      if (needsOverdue || needsStalledNow) {
+        apiExisting.title = needsOverdue
+          ? `「${title}」逾期风险`
+          : `「${title}」进展停滞风险`;
+        apiExisting.description = needsOverdue && needsStalledNow
+          ? `${typeLabel === 'todo' ? '待办' : '任务'}「${title}」已逾期 ${overdueDays} 天且停滞 ${stalledDays} 天未更新，请及时跟进处理。`
+          : needsOverdue
+            ? `${typeLabel === 'todo' ? '待办' : '任务'}「${title}」已逾期 ${overdueDays} 天，请及时跟进处理。`
+            : `${typeLabel === 'todo' ? '待办' : '任务'}「${title}」已停滞 ${stalledDays} 天未更新进展，建议评估是否需要调整资源或重新评估排期。`;
+        apiExisting.severity = needsOverdue && needsStalledNow
+          ? 'high'
+          : needsOverdue
+            ? getSeverityFromOverdueDays(overdueDays)
+            : stalledDays >= 5 ? 'high' : stalledDays >= 3 ? 'medium' : 'low';
+        apiExisting.updatedAt = new Date().toISOString();
+        try { await useRiskStore.getState().updateRisk(apiExisting.id, apiExisting); } catch (_) {}
+      }
+      return apiExisting;
+    }
+
+    const memExisting = risks.find((r) => r.sourceId === sourceId && r.status !== 'closed');
+    if (memExisting) {
+      if (needsOverdue || needsStalled) {
+        memExisting.title = needsOverdue
+          ? `「${title}」逾期风险`
+          : `「${title}」进展停滞风险`;
+        memExisting.description = needsOverdue && needsStalled
+          ? `${typeLabel === 'todo' ? '待办' : '任务'}「${title}」已逾期 ${overdueDays} 天且停滞 ${stalledDays} 天未更新，请及时跟进处理。`
+          : needsOverdue
+            ? `${typeLabel === 'todo' ? '待办' : '任务'}「${title}」已逾期 ${overdueDays} 天，请及时跟进处理。`
+            : `${typeLabel === 'todo' ? '待办' : '任务'}「${title}」已停滞 ${stalledDays} 天未更新进展，建议评估是否需要调整资源或重新评估排期。`;
+        memExisting.severity = needsOverdue && needsStalled
+          ? 'high'
+          : needsOverdue
+            ? getSeverityFromOverdueDays(overdueDays)
+            : stalledDays >= 5 ? 'high' : stalledDays >= 3 ? 'medium' : 'low';
+        memExisting.updatedAt = new Date().toISOString();
+        try { await useRiskStore.getState().updateRisk(memExisting.id, memExisting); } catch (_) {}
+      }
+      return memExisting;
+    }
+
+    const now = new Date().toISOString();
+    const sev = needsOverdue && needsStalled
+      ? 'high'
+      : needsOverdue
+        ? getSeverityFromOverdueDays(overdueDays)
+        : stalledDays >= 5 ? 'high' : stalledDays >= 3 ? 'medium' : 'low';
+    try {
+      const created = await useRiskStore.getState().addRisk({
+        projectId,
+        title: needsOverdue ? `「${title}」逾期风险` : `「${title}」进展停滞风险`,
+        description: needsOverdue && needsStalled
+          ? `${typeLabel === 'todo' ? '待办' : '任务'}「${title}」已逾期 ${overdueDays} 天且停滞 ${stalledDays} 天未更新，请及时跟进处理。`
+          : needsOverdue
+            ? `${typeLabel === 'todo' ? '待办' : '任务'}「${title}」已逾期 ${overdueDays} 天，请及时跟进处理。`
+            : `${typeLabel === 'todo' ? '待办' : '任务'}「${title}」已停滞 ${stalledDays} 天未更新进展，建议评估是否需要调整资源或重新评估排期。`,
+        severity: sev,
+        probability: 'high',
+        status: 'open',
+        owner: '',
+        identifiedDate: now.split('T')[0],
+        mitigation: '',
+        sourceId,
+        sourceType,
+        createdAt: now,
+        updatedAt: now,
+      });
+      return created;
+    } catch (err) {
+      console.error('[ReminderEngine] 自动创建风险失败:', err);
+      return null;
+    }
+  }, [risks, apiClient]);
 
   // 解析任务责任人名称列表（兼容 assignee 字符串和 assignees 数组）
   const getAssigneeNames = (task) => {
@@ -53,7 +156,11 @@ export function useReminderEngine() {
 
     // === 任务提醒 ===
     tasks.forEach((task) => {
-      if (task.status === 'done' || task.status === 'blocked') return;
+      // 已完成/阻塞的任务：关闭关联风险
+      if (task.status === 'done' || task.status === 'blocked') {
+        autoCloseRelatedRisks(task.id, 'task', task.title);
+        return;
+      }
       if (!task.dueDate) return;
 
       const dueDate = parseISO(task.dueDate);
@@ -93,7 +200,10 @@ export function useReminderEngine() {
       if (cfg.enableOverdue && daysDiff < 0) {
         const overdueDays = Math.abs(daysDiff);
 
-        // 逾期首日提醒
+        // 逾期时自动创建风险记录（ensureRiskExists 内部负责去重）
+        ensureRiskExists(task.id, 'task', task.title, task.projectId, overdueDays);
+
+        // 逾期首日通知
         if (overdueDays === 1) {
           if (!hasNotification(task.id, 'task')) {
             addNotification({
@@ -126,11 +236,26 @@ export function useReminderEngine() {
           }
         }
       }
+
+      // 停滞任务检测：in_progress 且超过配置天数未更新
+      if (cfg.enableStalled && task.status === 'in_progress') {
+        const updatedAt = task.updatedAt || task.updated_at || task.createdAt;
+        if (updatedAt) {
+          const daysSinceUpdate = differenceInCalendarDays(now, parseISO(updatedAt));
+          if (daysSinceUpdate >= cfg.stalledDays) {
+            ensureRiskExists(task.id, 'task', task.title, task.projectId, undefined, daysSinceUpdate);
+          }
+        }
+      }
     });
 
     // === 待办提醒 ===
     todos.forEach((todo) => {
-      if (todo.completed) return;
+      // 已完成的待办：关闭关联风险
+      if (todo.completed) {
+        autoCloseRelatedRisks(todo.id, 'todo', todo.title);
+        return;
+      }
       if (!todo.dueDate) return;
 
       const dueDate = parseISO(todo.dueDate);
@@ -166,6 +291,8 @@ export function useReminderEngine() {
 
       if (cfg.enableOverdue && daysDiff < 0) {
         const overdueDays = Math.abs(daysDiff);
+        // 逾期时自动创建风险记录（ensureRiskExists 内部负责去重）
+        ensureRiskExists(todo.id, 'todo', todo.title, todo.projectId, overdueDays);
         if (overdueDays === 1) {
           if (!hasNotification(todo.id, 'todo')) {
             addNotification({
@@ -252,7 +379,7 @@ export function useReminderEngine() {
         }
       }
     });
-  }, [tasks, todos, milestones, projects, addNotification, hasNotification]);
+  }, [tasks, todos, milestones, projects, addNotification, hasNotification, ensureRiskExists]);
 
   // 发送浏览器桌面通知
   const sendBrowserNotification = useCallback((title, body) => {

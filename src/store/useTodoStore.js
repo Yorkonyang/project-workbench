@@ -40,11 +40,16 @@ export const useTodoStore = create(
       toggleTodo: async (id) => {
         const todo = get().todos.find((t) => t.id === id);
         if (!todo) return;
+        const wasCompleted = todo.completed;
         const updated = await get().updateTodo(id, {
           completed: !todo.completed,
           completedAt: !todo.completed ? new Date().toISOString() : null,
           completed_at: !todo.completed ? new Date().toISOString() : null,
         });
+        // 待办完成时，立即关闭关联风险
+        if (!wasCompleted && updated.completed) {
+          autoCloseRelatedRisks(updated.id, 'todo', updated.title);
+        }
         return updated;
       },
 

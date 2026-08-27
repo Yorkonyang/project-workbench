@@ -5,6 +5,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { apiClient } from '@/lib/apiClient';
 import { useProjectStore } from '@/store/useProjectStore';
+import { autoCloseRelatedRisks } from '@/hooks/useAutoCloseRisks';
 
 export const useTaskStore = create(
   persist(
@@ -50,6 +51,10 @@ export const useTaskStore = create(
               await projectStore.updateProject(pid, { status: 'in_progress' });
             }
           }
+        }
+        // 任务完成或阻塞时，立即关闭关联风险
+        if ((newStatus === 'done' || newStatus === 'blocked') && oldStatus !== newStatus) {
+          autoCloseRelatedRisks(task.id, 'task', task.title);
         }
         return task;
       },
