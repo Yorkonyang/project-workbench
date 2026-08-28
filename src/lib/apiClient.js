@@ -72,6 +72,13 @@ class ApiClient {
         });
     }
 
+    // 直接归档（项目负责人一键归档，无需审批）
+    async directArchiveProject(id) {
+        return this.request(`/projects/${id}/archive-direct`, {
+            method: 'POST',
+        });
+    }
+
     // Projects
     async getProjects() {
         return this.request('/projects');

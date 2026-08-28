@@ -100,6 +100,24 @@ export const useProjectStore = create(
         }));
         return result;
       },
+
+      // 直接归档（项目负责人一键归档，无需审批）
+      // 优先调用 archive-direct 端点；若后端为旧版（无此端点）则回退到审批通过端点
+      directArchive: async (id) => {
+        try {
+          const result = await apiClient.directArchiveProject(id);
+          set((state) => ({
+            projects: state.projects.map((p) => (p.id === id ? result.project : p)),
+          }));
+          return result;
+        } catch (err) {
+          const result = await apiClient.approveArchive(id);
+          set((state) => ({
+            projects: state.projects.map((p) => (p.id === id ? result.project : p)),
+          }));
+          return result;
+        }
+      },
     }),
     {
       name: 'pw_projects',

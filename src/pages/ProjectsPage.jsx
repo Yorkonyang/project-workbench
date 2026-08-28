@@ -6,6 +6,7 @@ import ProjectForm from '@/components/projects/ProjectForm';
 import ProjectCard from '@/components/projects/ProjectCard';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { useProjectStore } from '@/store/useProjectStore';
+import { useAccess } from '@/hooks/useAccess';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
 import { useTaskStore } from '@/store/useTaskStore';
@@ -42,6 +43,8 @@ export default function ProjectsPage() {
   // 新建任务弹窗：绑定项目（点击项目标题区域打开，自动关联该项目）
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [taskFormProjectId, setTaskFormProjectId] = useState('');
+  // 删除确认：待删除项目
+  const [pendingDeleteProject, setPendingDeleteProject] = useState(null);
 
   const projects = useProjectStore((s) => s.projects);
   const addProject = useProjectStore((s) => s.addProject);
@@ -51,6 +54,7 @@ export default function ProjectsPage() {
   const rejectArchive = useProjectStore((s) => s.rejectArchive);
   const restoreProject = useProjectStore((s) => s.restoreProject);
   const deleteProject = useProjectStore((s) => s.deleteProject);
+  const directArchive = useProjectStore((s) => s.directArchive);
   const currentUserId = useAuthStore((s) => s.currentUserId);
   const members = useAuthStore((s) => s.members || []);
   const addNotification = useNotificationStore((s) => s.addNotification);
@@ -88,6 +92,9 @@ export default function ProjectsPage() {
   const toggleTodo = useTodoStore((s) => s.toggleTodo);
 
   const isAdmin = members.some((m) => m.id === currentUserId && m.role === 'admin');
+
+  // 权限门控：项目负责人（含系统管理员）可见「归档 / 删除」
+  const { canManageProject } = useAccess();
 
   const activeProjects = projects.filter((p) => !p.archived);
   const archivedProjects = projects.filter((p) => p.archived);
@@ -402,6 +409,31 @@ export default function ProjectsPage() {
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
                   </button>
+                  {/* 归档 / 删除：仅项目负责人可见（普通成员不显示） */}
+                  {canManageProject(project) && (
+                    <>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          directArchive(project.id);
+                        }}
+                        className="p-1.5 hover:bg-amber-100 rounded text-slate-400 hover:text-amber-600 shrink-0"
+                        title="归档项目（完成后清理列表）"
+                      >
+                        <Archive className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPendingDeleteProject(project);
+                        }}
+                        className="p-1.5 hover:bg-red-100 rounded text-slate-400 hover:text-red-600 shrink-0"
+                        title="删除项目"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
                 </div>
 
                 {/* ── 第二层：任务列表 ── */}
@@ -631,6 +663,25 @@ export default function ProjectsPage() {
           task={editingTask}
           projects={projects}
           onClose={() => setEditingTask(null)}
+        />
+      )}
+
+      {/* 删除项目确认对话框（防误操作） */}
+      {pendingDeleteProject && (
+        <ConfirmDialog
+          title="删除项目"
+          message={`确定要删除「${pendingDeleteProject.name}」吗？该操作将同时删除其下所有任务（含子项目），且不可恢复。`}
+          confirmLabel="删除"
+          onConfirm={async () => {
+            try {
+              await deleteProject(pendingDeleteProject.id);
+            } catch (err) {
+              console.error('删除项目失败:', err);
+            } finally {
+              setPendingDeleteProject(null);
+            }
+          }}
+          onClose={() => setPendingDeleteProject(null)}
         />
       )}
     </PageContainer>

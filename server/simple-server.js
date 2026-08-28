@@ -429,6 +429,39 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // 直接归档（项目负责人一键归档，无需审批）- POST /api/projects/:id/archive-direct
+    if (pathname.match(/\/api\/projects\/[\w-]+\/archive-direct$/) && method === 'POST') {
+        const data = loadData();
+        const id = pathname.split('/')[3];
+        const userId = ac.getUserId(req, url);
+        const index = data.projects.findIndex(p => p.id === id);
+        if (index !== -1) {
+            if (!ac.canManageProject(data, userId, id)) {
+                sendResponse(res, 403, { error: '无权归档该项目' });
+                return;
+            }
+            data.projects[index].archiveStatus = 'approved';
+            data.projects[index].archived = 1;
+            data.projects[index].status = 'archived';
+            data.projects[index].archivedAt = new Date().toISOString();
+            data.projects[index].updated_at = new Date().toISOString();
+            // 级联更新任务状态
+            let tasksUpdated = 0;
+            data.tasks.forEach(t => {
+                if (t.projectId === id || t.project_id === id) {
+                    t.status = 'archived';
+                    t.archivedAt = new Date().toISOString();
+                    tasksUpdated++;
+                }
+            });
+            saveData(data);
+            sendResponse(res, 200, { project: data.projects[index], tasksUpdated });
+        } else {
+            sendResponse(res, 404, { error: 'Project not found' });
+        }
+        return;
+    }
+
     // 驳回申请 - POST /api/projects/:id/reject-archive
     if (pathname.match(/\/api\/projects\/[\w-]+\/reject-archive$/) && method === 'POST') {
         const data = loadData();
