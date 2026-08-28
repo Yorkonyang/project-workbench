@@ -94,7 +94,9 @@ export default function ProjectsPage() {
   const isAdmin = members.some((m) => m.id === currentUserId && m.role === 'admin');
 
   // 权限门控：项目负责人（含系统管理员）可见「归档 / 删除」
-  const { canManageProject } = useAccess();
+  // canReportTask：仅任务 assignee 才能打开/汇报进度
+  // canManageTodo：仅 todo 的 owner/assignee 才能勾选/取消
+  const { canManageProject, canReportTask, canManageTodo } = useAccess();
 
   const activeProjects = projects.filter((p) => !p.archived);
   const archivedProjects = projects.filter((p) => p.archived);
@@ -374,14 +376,26 @@ export default function ProjectsPage() {
                       <ChevronRight className="w-4 h-4" />
                     )}
                   </button>
-                  {/* 项目圆点 + 标题区域：点击打开新建任务弹窗（自动关联该项目） */}
+                  {/* 项目圆点 + 标题区域：项目负责人点击打开新建任务弹窗；成员点击进入项目详情（无权新建任务） */}
                   <button
                     onClick={() => {
+                      // 权限矩阵：被分配任务的成员不能在没有负责的项目中新建任务
+                      // - 负责人/admin：点击弹新建任务（绑该项目）
+                      // - 成员：跳项目详情页（不做"新建任务"入口）
+                      if (!canManageProject(project)) {
+                        navigate(`/projects/${project.id}`);
+                        return;
+                      }
                       setTaskFormProjectId(project.id);
                       setShowTaskForm(true);
                     }}
-                    className="flex items-center gap-2.5 flex-1 min-w-0 text-left group hover:bg-slate-50 rounded-lg px-1 py-0.5 transition-smooth"
-                    title="点击为该项目新建任务"
+                    className={cn(
+                      "flex items-center gap-2.5 flex-1 min-w-0 text-left rounded-lg px-1 py-0.5 transition-smooth",
+                      canManageProject(project)
+                        ? "group hover:bg-slate-50 cursor-pointer"
+                        : "group-hover:text-slate-700"
+                    )}
+                    title={canManageProject(project) ? '点击为该项目新建任务' : '点击进入项目详情（成员无权在此新建任务）'}
                   >
                     <span
                       className="w-2.5 h-2.5 rounded-full shrink-0"
@@ -469,10 +483,17 @@ export default function ProjectsPage() {
                                   )}
                                 </button>
                               </div>
-                              {/* 任务主体：点击弹出进度汇报 */}
+                              {/* 任务主体：仅任务负责人（assignee）才能点击弹出进度汇报；其他人不可打开（权限矩阵） */}
                               <div
-                                className="flex items-center gap-2.5 px-2 py-2.5 flex-1 cursor-pointer hover:bg-slate-50 transition-smooth min-w-0"
-                                onClick={() => setEditingTask(task)}
+                                className={cn(
+                                  "flex items-center gap-2.5 px-2 py-2.5 flex-1 min-w-0 transition-smooth",
+                                  canReportTask(task) ? 'cursor-pointer hover:bg-slate-50' : 'cursor-default text-slate-400'
+                                )}
+                                onClick={() => {
+                                  if (!canReportTask(task)) return; // 非任务责任人不可打开
+                                  setEditingTask(task);
+                                }}
+                                title={canReportTask(task) ? '点击查看/汇报进度' : '您没有参与该任务，无权查看详情'}
                               >
                                 <span className="text-sm text-slate-700 flex-1 truncate" style={{ fontFamily: 'SimHei, "Microsoft YaHei", sans-serif' }}>
                                   {task.title}
@@ -507,15 +528,20 @@ export default function ProjectsPage() {
                                         type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          toggleTodo(todo.id);
+                                          // 仅项目的 owner/admin 或 自己创建/被分配的待办 可切换状态
+                                          if (canManageTodo(todo)) toggleTodo(todo.id);
                                         }}
+                                        disabled={!canManageTodo(todo)}
                                         aria-checked={todo.completed ? 'true' : 'false'}
                                         role="checkbox"
-                                        className="relative w-5 h-5 rounded-full border-2 shrink-0 transition-colors select-none"
-                                        style={{
-                                          backgroundColor: todo.completed ? '#22c55e' : 'transparent',
-                                          borderColor: todo.completed ? '#22c55e' : '#d1d5db',
-                                        }}
+                                        className={cn(
+                                          "relative w-5 h-5 rounded-full border-2 shrink-0 transition-colors select-none",
+                                          todo.completed
+                                            ? 'bg-green-500 border-green-500'
+                                            : canManageTodo(todo)
+                                              ? 'border-slate-300 hover:border-primary-500'
+                                              : 'border-slate-200 opacity-50 cursor-not-allowed'
+                                        )}
                                       >
                                         {todo.completed ? (
                                           <svg viewBox="0 0 20 20" className="absolute inset-0 m-auto w-3 h-3 pointer-events-none" aria-hidden="true">

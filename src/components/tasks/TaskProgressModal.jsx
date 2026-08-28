@@ -9,6 +9,8 @@ import { useTodoStore } from '@/store/useTodoStore';
 import { useMemberStore } from '@/store/useMemberStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useDocumentStore } from '@/store/useDocumentStore';
+import { useProjectStore } from '@/store/useProjectStore';
+import { useAccess } from '@/hooks/useAccess';
 import DocumentForm from '@/components/documents/DocumentForm';
 import TodoForm from '@/components/todos/TodoForm';
 
@@ -164,6 +166,13 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
   const documents = useDocumentStore((s) => s.documents);
   const [docSelectorOpen, setDocSelectorOpen] = useState(false);
 
+  // 权限：仅任务 assignee 才能写汇报/进度；仅项目负责人/admin 才能审批/撤回
+  const projectList = useProjectStore((s) => s.projects) || projects;
+  const project = (projectList || []).find((p) => p.id === task?.projectId);
+  const { canManageProject, canReportTask, canManageTodo } = useAccess();
+  const canManageProj = canManageProject(project);
+  const canReport = canReportTask(task);
+
   const [reports, setReports] = useState(task?.progressReports || []);
   const [newReport, setNewReport] = useState({
     content: '',
@@ -190,6 +199,8 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
   );
 
   const handleToggleTodo = async (todoId) => {
+    const todo = (todos || []).find((t) => t.id === todoId);
+    if (!todo || !canManageTodo(todo)) return; // 仅 todo 的 owner/被分配或项目负责人可切换
     await toggleTodo(todoId);
   };
 
@@ -201,6 +212,7 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
   };
 
   const handleAddReport = () => {
+    if (!canReport) return; // 仅任务 assignee 可添加汇报
     if (!newReport.content.trim()) return;
     const report = {
       id: Date.now(),
@@ -217,11 +229,13 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
   };
 
   const handleStartTask = () => {
+    if (!canReport) return; // 仅任务 assignee 可启动
     updateTask(task.id, { status: 'in_progress' });
     onClose();
   };
 
   const handleSubmitReport = () => {
+    if (!canReport) return; // 仅任务 assignee 可保存
     setSubmitting(true);
     // Simulate API call
     setTimeout(() => {
@@ -232,6 +246,7 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
   };
 
   const handleFinishTask = () => {
+    if (!canReport) return; // 仅任务 assignee 可提交审核
     if (!reports.length) {
       alert('请先添加进度汇报');
       return;
@@ -240,8 +255,9 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
     onClose();
   };
 
-  // 评审通过：推进到已完成
+  // 评审通过：仅项目负责人/admin 可操作（权限矩阵）
   const handleApproveReview = () => {
+    if (!canManageProj) return;
     updateTask(task.id, {
       status: 'done',
       progress: 100,
@@ -261,6 +277,7 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
   };
 
   const handleRemoveDocLink = (docId) => {
+    if (!canReport) return; // 仅任务 assignee 可移除关联文档
     const currentLinks = task?.documentLinks || [];
     updateTask(task.id, {
       documentLinks: currentLinks.filter(l => l.id !== docId),
@@ -303,10 +320,12 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
           <div className="border border-slate-200 rounded-lg overflow-hidden flex flex-col bg-white">
             <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
               <h4 className="text-sm font-medium text-slate-700">关联待办 ({taskTodos.length})</h4>
-              <Button size="sm" variant="ghost" onClick={() => setTodoFormOpen(true)}>
-                <Plus className="w-3.5 h-3.5" />
-                新增待办
-              </Button>
+              {canReport && (
+                <Button size="sm" variant="ghost" onClick={() => setTodoFormOpen(true)}>
+                  <Plus className="w-3.5 h-3.5" />
+                  新增待办
+                </Button>
+              )}
             </div>
 
             <div className="p-3 space-y-2 overflow-y-auto" style={{ maxHeight: '360px' }}>
@@ -351,10 +370,12 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
           <div className="border border-slate-200 rounded-lg overflow-hidden flex flex-col bg-white">
             <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
               <h4 className="text-sm font-medium text-slate-700">进度汇报记录 ({reports.length})</h4>
-              <Button size="sm" variant="ghost" onClick={() => setShowForm(!showForm)}>
-                <Plus className="w-3.5 h-3.5" />
-                新增进度汇报
-              </Button>
+              {canReport && (
+                <Button size="sm" variant="ghost" onClick={() => setShowForm(!showForm)}>
+                  <Plus className="w-3.5 h-3.5" />
+                  新增进度汇报
+                </Button>
+              )}
             </div>
 
             <div className="p-3 space-y-3 overflow-y-auto" style={{ maxHeight: '360px' }}>
@@ -432,10 +453,12 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
                 <Paperclip className="w-4 h-4 text-slate-400" />
                 任务文档 ({linkedDocs.length})
               </h4>
-              <Button size="sm" variant="ghost" onClick={() => setDocSelectorOpen(true)}>
-                <Plus className="w-3.5 h-3.5" />
-                添加文档
-              </Button>
+              {canReport && (
+                <Button size="sm" variant="ghost" onClick={() => setDocSelectorOpen(true)}>
+                  <Plus className="w-3.5 h-3.5" />
+                  添加文档
+                </Button>
+              )}
             </div>
 
             <div className="p-3 space-y-2 min-h-[80px] max-h-[160px] overflow-y-auto">
@@ -456,13 +479,15 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
                     >
                       {doc.title}
                     </button>
-                    <button
-                      onClick={() => handleRemoveDocLink(doc.id)}
-                      className="p-1 text-slate-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                      title="移除关联"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
+                    {canReport && (
+                      <button
+                        onClick={() => handleRemoveDocLink(doc.id)}
+                        className="p-1 text-slate-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                        title="移除关联"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 ))
               )}
@@ -470,38 +495,52 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
           </div>
         )}
 
-        {/* Submit/Finish Actions */}
+        {/* Submit/Finish Actions — 按权限矩阵：撤回/启动/保存/提交审核 限 assignee，评审通过 限项目负责人/admin */}
         <div className="flex gap-3 pt-4 border-t border-slate-100">
           {task.status === 'review' && (
             <>
-              <Button variant="outline" onClick={() => updateTask(task.id, { status: 'in_progress' })}>
-                撤回提交
-              </Button>
-              <Button variant="success" onClick={handleApproveReview} className="px-6">
-                <CheckCircle2 className="w-4 h-4" />
-                评审通过
-              </Button>
+              {/* 撤回提交 = 自己的任务从评审撤回到进行中，仅 assignee 可操作 */}
+              {canReport && (
+                <Button variant="outline" onClick={() => updateTask(task.id, { status: 'in_progress' })}>
+                  撤回提交
+                </Button>
+              )}
+              {/* 评审通过 = 收尾/归档动作，仅项目负责人/admin 可操作 */}
+              {canManageProj && (
+                <Button variant="success" onClick={handleApproveReview} className="px-6">
+                  <CheckCircle2 className="w-4 h-4" />
+                  评审通过
+                </Button>
+              )}
             </>
           )}
-          {task.status === 'todo' && (
+          {task.status === 'todo' && canReport && (
             <Button size="sm" onClick={handleStartTask} className="flex-1">
               <Flag className="w-4 h-4" />
               启动任务
             </Button>
           )}
-          <Button
-            variant="success"
-            onClick={handleSubmitReport}
-            disabled={submitting || task.status === 'done'}
-            className="flex-1"
-          >
-            <Check className="w-4 h-4" />
-            {task.status === 'done' ? '已完成' : '保存进度汇报'}
-          </Button>
-          {task.status !== 'todo' && task.status !== 'done' && task.status !== 'review' && (
+          {canReport && (
+            <Button
+              variant="success"
+              onClick={handleSubmitReport}
+              disabled={submitting || task.status === 'done'}
+              className="flex-1"
+            >
+              <Check className="w-4 h-4" />
+              {task.status === 'done' ? '已完成' : '保存进度汇报'}
+            </Button>
+          )}
+          {canReport && task.status !== 'todo' && task.status !== 'done' && task.status !== 'review' && (
             <Button variant="outline" onClick={handleFinishTask} className="px-6">
               提交审核
             </Button>
+          )}
+          {/* 没有任何可操作按钮时给出提示，避免用户迷惑"为什么没按钮" */}
+          {!canReport && !canManageProj && (
+            <div className="flex-1 text-xs text-slate-400 text-center py-2">
+              您没有该任务的写权限：仅项目负责人可评审、仅任务负责人可汇报进度
+            </div>
           )}
         </div>
       </div>
