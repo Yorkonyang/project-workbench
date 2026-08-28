@@ -22,7 +22,7 @@ export default function TimelinePage() {
   const updateMilestone = useMilestoneStore((s) => s.updateMilestone);
   const deleteMilestone = useMilestoneStore((s) => s.deleteMilestone);
   const projects = useProjectStore((s) => s.projects);
-  const { isAdmin, canManageProject } = useAccess();
+  const { isAdmin, canManageProject, canViewProjectTasks, currentUserId } = useAccess();
   // 仅管理员或至少拥有一个可管理项目时可新建里程碑（成员后端会 403）
   const canCreateMilestone = isAdmin || projects.some((p) => canManageProject(p));
   // 仅向里程碑表单提供可管理的项目，避免成员误选他人项目
@@ -41,30 +41,35 @@ export default function TimelinePage() {
   const [editingMilestone, setEditingMilestone] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
-  // Filter out archived projects
-  const activeProjectIds = new Set(projects.filter((p) => !p.archived).map((p) => p.id));
+  // 仅显示成员可看任务时间线的项目（owner/admin 或 被分配任务的成员），排除纯待办成员
+  const taskVisibleProjects = useMemo(
+    () => projects.filter((p) => !p.archived && canViewProjectTasks(p)),
+    [projects, canViewProjectTasks]
+  );
+  const activeProjectIds = new Set(taskVisibleProjects.map((p) => p.id));
 
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
-      if (projectFilter) {
-        return (t.projectId === projectFilter || t.project_id === projectFilter);
-      }
-      return activeProjectIds.has(t.projectId);
+      const pid = t.projectId || t.project_id;
+      if (projectFilter && pid !== projectFilter) return false;
+      const proj = projects.find((p) => p.id === pid);
+      if (!canViewProjectTasks(proj)) return false;
+      if (canManageProject(proj)) return true;
+      // 成员：仅自己被分配的任务时间线
+      return Array.isArray(t.assignees)
+        ? t.assignees.includes(currentUserId)
+        : t.assignee === currentUserId;
     });
-  }, [tasks, activeProjectIds, projectFilter]);
+  }, [tasks, projects, projectFilter, canViewProjectTasks, canManageProject, currentUserId]);
 
   const filteredMilestones = useMemo(() => {
     return milestones.filter((m) => {
-      if (projectFilter) {
-        return m.projectId === projectFilter;
-      }
+      if (projectFilter && m.projectId !== projectFilter) return false;
       return activeProjectIds.has(m.projectId);
     });
-  }, [milestones, activeProjectIds, projectFilter]);
+  }, [milestones, projectFilter, activeProjectIds]);
 
-  const filteredProjects = useMemo(() => {
-    return projects.filter((p) => !p.archived);
-  }, [projects]);
+  const filteredProjects = taskVisibleProjects;
 
   // 甘特图起点：取自选中项目的 startDate
   const selectedProject = projects.find((p) => p.id === projectFilter);
@@ -110,7 +115,7 @@ export default function TimelinePage() {
           disabled={isLocked}
           options={[
             { value: '', label: '全部项目' },
-            ...projects.filter((p) => !p.archived).map((p) => ({ value: p.id, label: p.name })),
+            ...taskVisibleProjects.map((p) => ({ value: p.id, label: p.name })),
           ]}
           className="w-40"
         />

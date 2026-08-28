@@ -60,22 +60,53 @@ function taskAssigneeIncludes(task, userId) {
 }
 
 function visibleProjectIds(data, userId) {
+    if (!userId) return new Set();
+    if (isAdmin(data, userId)) return new Set((data.projects || []).map((p) => p.id));
+    // 与 visibleProjects 保持一致：成员可见自己被分配任务/待办的项目
+    return new Set(visibleProjects(data, userId).map((p) => p.id));
+}
+
+// 任务/风险/里程碑/文档 可见的项目集合：
+// 仅 owner/admin 或「被分配任务的成员」（不含仅被分配待办的成员）。
+// 纯待办成员只能看「待办提醒」，不能看其他页面内容，故用此集合隔离。
+function taskVisibleProjectIds(data, userId) {
+    if (!userId) return new Set();
     if (isAdmin(data, userId)) return new Set((data.projects || []).map((p) => p.id));
     return new Set(
-        (data.projects || [])
-            .filter((p) => isProjectOwner(p, userId))
-            .map((p) => p.id)
+        (data.projects || []).filter((p) => canViewProject(data, userId, p.id)).map((p) => p.id)
     );
 }
 
 function visibleProjects(data, userId) {
+    if (!userId) return [];
     if (isAdmin(data, userId)) return data.projects || [];
-    return (data.projects || []).filter((p) => isProjectOwner(p, userId));
+    const myId = String(userId);
+    const myName = getUserName(data, userId);
+    return (data.projects || []).filter((p) => {
+        // 1. 项目所有者（ownerId 创建者 或 manager 指定负责人）
+        if (p.ownerId === myId || p.manager === myId) return true;
+        // 2. 项目成员：该项目下存在「自己作为 assignee 的任务」或「自己作为 assignee 的待办」
+        const mineInProject = (data.tasks || []).some(
+            (t) => (t.projectId || t.project_id) === p.id && taskAssigneeIncludes(t, myId)
+        );
+        if (mineInProject) return true;
+        const mineTodoInProject = (data.todos || []).some(
+            (todo) => {
+                if ((todo.projectId || '') !== p.id) return false;
+                // 待办 assignee 支持 id 与 name 两种写法（兼容历史数据）
+                const a = todo.assignee;
+                if (Array.isArray(a)) return a.some((x) => x === myId || x === myName);
+                return a === myId || a === myName;
+            }
+        );
+        if (mineTodoInProject) return true;
+        return false;
+    });
 }
 
 function visibleTasks(data, userId) {
     if (isAdmin(data, userId)) return data.tasks || [];
-    const projIds = visibleProjectIds(data, userId);
+    const projIds = taskVisibleProjectIds(data, userId);
     return (data.tasks || []).filter((t) => {
         const pid = t.projectId || t.project_id;
         if (pid && projIds.has(pid)) return true;
@@ -85,28 +116,43 @@ function visibleTasks(data, userId) {
 
 function visibleTodos(data, userId) {
     if (isAdmin(data, userId)) return data.todos || [];
-    const projIds = visibleProjectIds(data, userId);
+    const projIds = taskVisibleProjectIds(data, userId);
     const name = getUserName(data, userId);
     return (data.todos || []).filter((t) => {
-        if (t.projectId && projIds.has(t.projectId)) return true;
+        // 项目所有者/admin：可见项目下全部待办
+        if (t.projectId && projIds.has(t.projectId) && canManageProject(data, userId, t.projectId)) return true;
+        // 其他成员：仅自己创建(ownerId)或被分配(assignee id/name)的待办
+        if (t.ownerId === userId) return true;
         if (name && t.assignee === name) return true;
+        if (Array.isArray(t.assignee) ? t.assignee.includes(userId) : t.assignee === userId) return true;
         return false;
     });
 }
 
 function visibleDocuments(data, userId) {
     if (isAdmin(data, userId)) return data.documents || [];
-    const projIds = visibleProjectIds(data, userId);
+    const projIds = taskVisibleProjectIds(data, userId);
     return (data.documents || []).filter((d) => {
-        if (d.projectId && projIds.has(d.projectId)) return true;
+        // 项目所有者/admin：可见项目下全部文档
+        if (d.projectId && projIds.has(d.projectId) && canManageProject(data, userId, d.projectId)) return true;
+        // 其他成员：仅自己添加的文档
         return d.ownerId === userId;
     });
 }
 
 function visibleMilestones(data, userId) {
+    if (!userId) return [];
     if (isAdmin(data, userId)) return data.milestones || [];
-    const projIds = visibleProjectIds(data, userId);
+    const projIds = taskVisibleProjectIds(data, userId);
     return (data.milestones || []).filter((m) => m.projectId && projIds.has(m.projectId));
+}
+
+// 风险可见性：复用"任务可见项目"集合（不含纯待办成员）；无 projectId 的全局风险仅 admin 可见
+function visibleRisks(data, userId) {
+    if (!userId) return [];
+    if (isAdmin(data, userId)) return data.risks || [];
+    const projIds = taskVisibleProjectIds(data, userId);
+    return (data.risks || []).filter((r) => r.projectId && projIds.has(r.projectId));
 }
 
 // 写操作校验 ------------------------------------------------------
@@ -203,11 +249,13 @@ module.exports = {
     canManageDocument,
     canManageMilestone,
     canViewProject,
+    taskVisibleProjectIds,
     visibleProjects,
     visibleTasks,
     visibleTodos,
     visibleDocuments,
     visibleMilestones,
+    visibleRisks,
     visibleProjectIds,
     getUserName,
     taskAssigneeIncludes,

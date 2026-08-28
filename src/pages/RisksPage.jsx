@@ -11,6 +11,7 @@ import { useRiskStore } from '@/store/useRiskStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useTodoStore } from '@/store/useTodoStore';
+import { useAccess } from '@/hooks/useAccess';
 
 export default function RisksPage() {
   const risks = useRiskStore((s) => s.risks);
@@ -20,13 +21,21 @@ export default function RisksPage() {
   const projects = useProjectStore((s) => s.projects);
   const tasks = useTaskStore((s) => s.tasks);
   const todos = useTodoStore((s) => s.todos);
+  const { canViewRisk, canManageProject, isAdmin } = useAccess();
 
   const [showForm, setShowForm] = useState(false);
   const [editingRisk, setEditingRisk] = useState(null);
   const [openDetail, setOpenDetail] = useState(null);
 
+  // 仅项目所有者/admin 可新建风险（成员仅查看，不可创建）
+  const manageableProjects = isAdmin
+    ? projects.filter((p) => !p.archived)
+    : projects.filter((p) => !p.archived && canManageProject(p));
+  const canCreateRisk = isAdmin || manageableProjects.length > 0;
+
   const activeProjectIds = new Set(projects.filter((p) => !p.archived).map((p) => p.id));
   const activeRisks = risks
+    .filter((r) => canViewRisk(r))
     .filter((r) => activeProjectIds.has(r.projectId) || !r.projectId)
     .filter((r) => r.status !== 'closed');
 
@@ -70,10 +79,12 @@ export default function RisksPage() {
       title="风险管理"
       subtitle={`${risks.length} 个风险项`}
       action={
-        <Button size="sm" onClick={() => setShowForm(true)}>
-          <Plus className="w-4 h-4" />
-          添加风险
-        </Button>
+        canCreateRisk ? (
+          <Button size="sm" onClick={() => setShowForm(true)}>
+            <Plus className="w-4 h-4" />
+            添加风险
+          </Button>
+        ) : undefined
       }
     >
       {/* Stats */}
@@ -146,7 +157,7 @@ export default function RisksPage() {
       {showForm && (
         <RiskForm
           risk={editingRisk}
-          projects={projects.filter((p) => !p.archived)}
+          projects={manageableProjects}
           onClose={handleCloseForm}
         />
       )}

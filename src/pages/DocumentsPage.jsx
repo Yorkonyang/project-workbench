@@ -16,7 +16,7 @@ export default function DocumentsPage() {
   const deleteDocument = useDocumentStore((s) => s.deleteDocument);
   const projects = useProjectStore((s) => s.projects);
   const tasks = useTaskStore((s) => s.tasks);
-  const { isAdmin, canManageProject, currentUserId } = useAccess();
+  const { isAdmin, canManageProject, canViewDocument, canViewProjectTasks, currentUserId } = useAccess();
 
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -24,8 +24,8 @@ export default function DocumentsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingDoc, setEditingDoc] = useState(null);
 
-  // 只取活跃项目
-  const activeProjects = projects.filter((p) => !p.archived);
+  // 只取活跃且成员可看文档的项目（owner/admin 或 被分配任务的成员；纯待办成员不可看文档页）
+  const activeProjects = projects.filter((p) => !p.archived && canViewProjectTasks(p));
   // 只筛选活跃项目的文档
   const activeProjectIds = new Set(activeProjects.map((p) => p.id));
 
@@ -44,6 +44,8 @@ export default function DocumentsPage() {
   const categories = [...new Set(documents.map((d) => d.category).filter(Boolean))];
 
   const filteredDocs = documents.filter((doc) => {
+    // 权限：成员仅可看自己添加的文档；owner/admin 可见项目全部
+    if (!canViewDocument(doc)) return false;
     // 过滤已归档项目的文档
     if (doc.projectId && !activeProjectIds.has(doc.projectId)) return false;
     if (projectFilter && doc.projectId !== projectFilter) return false;

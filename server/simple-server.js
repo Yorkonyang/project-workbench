@@ -1280,7 +1280,8 @@ const server = http.createServer(async (req, res) => {
     // ==================== Risks API ====================
     if (pathname === '/api/risks' && method === 'GET') {
         const data = loadData();
-        sendResponse(res, 200, data.risks || []);
+        const userId = ac.getUserId(req, url);
+        sendResponse(res, 200, ac.visibleRisks(data, userId));
         return;
     }
 

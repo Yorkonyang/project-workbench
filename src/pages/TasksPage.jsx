@@ -40,7 +40,7 @@ export default function TasksPage() {
   const currentUserId = useAuthStore((s) => s.currentUserId);
   const members = useMemberStore((s) => s.members);
   const currentUser = members.find((m) => m.id === currentUserId);
-  const { isAdmin, canManageProject } = useAccess();
+  const { isAdmin, canManageProject, canViewProjectTasks } = useAccess();
   // 仅当管理员或至少拥有一个可管理的项目时才允许新建任务（成员无自有项目时后端会 403）
   const canCreateTask = isAdmin || projects.some((p) => canManageProject(p));
 
@@ -70,8 +70,11 @@ export default function TasksPage() {
     }
   }, [location.search, tasks]);
 
-  const activeProjectIds = new Set(projects.filter((p) => !p.archived).map((p) => p.id));
-  const activeTasks = tasks.filter((t) => activeProjectIds.has(t.projectId));
+  // 任务可见项目：仅可被管理或被分配任务的项目（排除仅被分配待办的成员，防止其看到其他页面内容）
+  const activeProjectIds = new Set(
+    projects.filter((p) => !p.archived && canViewProjectTasks(p)).map((p) => p.id)
+  );
+  const activeTasks = tasks.filter((t) => activeProjectIds.has(t.projectId || t.project_id));
 
   const filteredTasks = activeTasks.filter((t) => {
     if (projectFilter && t.projectId !== projectFilter) return false;
@@ -137,7 +140,7 @@ export default function TasksPage() {
             onChange={setProjectFilter}
             options={[
               { value: '', label: '全部项目' },
-              ...projects.filter((p) => !p.archived).map((p) => ({ value: p.id, label: p.name })),
+              ...projects.filter((p) => !p.archived && canViewProjectTasks(p)).map((p) => ({ value: p.id, label: p.name })),
             ]}
             className="w-36"
           />
