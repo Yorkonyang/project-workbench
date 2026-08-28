@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Check, Edit2, Trash2, Calendar, Link2, Bell, User, CheckSquare, Flag } from 'lucide-react';
+import { Edit2, Trash2, Calendar, Link2, Bell, User, CheckSquare, Flag } from 'lucide-react';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useMemberStore } from '@/store/useMemberStore';
 import { useOrgStore } from '@/store/useOrgStore';
@@ -99,20 +99,28 @@ export default function TodoList({ items, onEditTodo, onDeleteTodo, onToggleTodo
                   : 'bg-amber-50 border-amber-200 hover:border-amber-300'
               )}
             >
-              {/* Checkbox */}
+              {/* Checkbox — 未完成时空心 ⭕️，完成后绿色带白勾。
+                  注意：按钮内仅渲染勾选图标，禁止塞入任何文本，避免渲染 0 等异常字符 */}
               <button
+                type="button"
+                role="checkbox"
+                aria-checked={todo.completed ? 'true' : 'false'}
                 onClick={(e) => {
                   e.stopPropagation();
                   onToggleTodo?.(todo.id);
                 }}
                 className={cn(
-                  'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors',
+                  'relative w-5 h-5 rounded-full border-2 shrink-0 transition-colors select-none',
                   todo.completed
                     ? 'bg-green-500 border-green-500'
                     : 'border-amber-400 hover:border-amber-500'
                 )}
               >
-                {todo.completed && <Check className="w-3 h-3 text-white" />}
+                {todo.completed ? (
+                  <svg viewBox="0 0 20 20" className="absolute inset-0 m-auto w-3 h-3 pointer-events-none" aria-hidden="true">
+                    <polyline points="5 10.5 9 14.5 15.5 7" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                ) : null}
               </button>
 
               {/* 待办标识 */}

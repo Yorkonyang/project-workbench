@@ -5,6 +5,13 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { apiClient } from '@/lib/apiClient';
 
+// 归一化 todo 对象：completed 强制 boolean，避免后端返回数字 0 时 React 在 JSX 中渲染出 "0"
+// （JSX 中 {0 && X} 会渲染数字 0 本身，而 {false && X} 不会渲染）
+const normalizeTodo = (t) => ({
+  ...t,
+  completed: !!t.completed,
+});
+
 export const useTodoStore = create(
   persist(
     (set, get) => ({
@@ -16,7 +23,7 @@ export const useTodoStore = create(
         set({ loading: true });
         try {
           const todos = await apiClient.getTodos();
-          set({ todos, loading: false });
+          set({ todos: (todos || []).map(normalizeTodo), loading: false });
         } catch (err) {
           console.error('Failed to fetch todos:', err);
           set({ loading: false });
@@ -25,16 +32,18 @@ export const useTodoStore = create(
 
       addTodo: async (data) => {
         const todo = await apiClient.createTodo(data);
-        set((state) => ({ todos: [...state.todos, todo] }));
-        return todo;
+        const normalized = normalizeTodo(todo);
+        set((state) => ({ todos: [...state.todos, normalized] }));
+        return normalized;
       },
 
       updateTodo: async (id, data) => {
         const todo = await apiClient.updateTodo(id, data);
+        const normalized = normalizeTodo(todo);
         set((state) => ({
-          todos: state.todos.map((t) => (t.id === id ? todo : t)),
+          todos: state.todos.map((t) => (t.id === id ? normalized : t)),
         }));
-        return todo;
+        return normalized;
       },
 
       toggleTodo: async (id) => {

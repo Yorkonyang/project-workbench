@@ -476,13 +476,20 @@ export default function ProjectDetailPage() {
                       title={todo.completed ? '已完成' : '点击查看待办详情'}
                     >
                       <button
+                        type="button"
                         onClick={(e) => { e.stopPropagation(); toggleTodo(todo.id); }}
+                        role="checkbox"
+                        aria-checked={todo.completed ? 'true' : 'false'}
                         className={cn(
-                          'w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0',
+                          'relative w-4 h-4 rounded-full border-2 shrink-0 select-none',
                           todo.completed ? 'bg-green-500 border-green-500' : 'border-amber-400'
                         )}
                       >
-                        {todo.completed && <CheckSquare className="w-2.5 h-2.5 text-white" />}
+                        {todo.completed ? (
+                          <svg viewBox="0 0 20 20" className="absolute inset-0 m-auto w-2.5 h-2.5 pointer-events-none" aria-hidden="true">
+                            <polyline points="5 10.5 9 14.5 15.5 7" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        ) : null}
                       </button>
                       <span
                         className={cn('flex-1 min-w-0 text-xs truncate', todo.completed ? 'text-slate-400 line-through' : 'text-slate-700')}
@@ -590,13 +597,20 @@ export default function ProjectDetailPage() {
                   title={todo.completed ? '已完成' : '点击查看待办详情'}
                 >
                   <button
+                    type="button"
                     onClick={() => toggleTodo(todo.id)}
+                    role="checkbox"
+                    aria-checked={todo.completed ? 'true' : 'false'}
                     className={cn(
-                      'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0',
+                      'relative w-5 h-5 rounded-full border-2 shrink-0 select-none',
                       todo.completed ? 'bg-green-500 border-green-500' : 'border-amber-400 hover:border-amber-500'
                     )}
                   >
-                    {todo.completed && <CheckSquare className="w-3 h-3 text-white" />}
+                    {todo.completed ? (
+                      <svg viewBox="0 0 20 20" className="absolute inset-0 m-auto w-3 h-3 pointer-events-none" aria-hidden="true">
+                        <polyline points="5 10.5 9 14.5 15.5 7" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    ) : null}
                   </button>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">

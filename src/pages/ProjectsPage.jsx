@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Plus, Archive, RotateCcw, FileText, Check, X, ChevronRight, ChevronDown, Edit2, Trash2, ExternalLink, CheckSquare } from 'lucide-react';
+import { Plus, Archive, RotateCcw, FileText, X, ChevronRight, ChevronDown, Edit2, Trash2, ExternalLink } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Button from '@/components/ui/Button';
 import ProjectForm from '@/components/projects/ProjectForm';
@@ -469,19 +469,27 @@ export default function ProjectsPage() {
                                       key={todo.id}
                                       className="flex items-center gap-2.5 px-4 py-2 pl-20 border-b border-slate-100 last:border-b-0"
                                     >
-                                      {/* 圆形 checkbox：未完成时空心，完成后绿色带白勾 */}
+                                      {/* 圆形 checkbox：未完成时空心 ⭕️，完成后绿色圆带白勾
+                                          注意：内部只能渲染勾选图标，禁止塞入任何文本，避免渲染 0 等异常字符 */}
                                       <button
+                                        type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           toggleTodo(todo.id);
                                         }}
-                                        className="w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors"
+                                        aria-checked={todo.completed ? 'true' : 'false'}
+                                        role="checkbox"
+                                        className="relative w-5 h-5 rounded-full border-2 shrink-0 transition-colors select-none"
                                         style={{
                                           backgroundColor: todo.completed ? '#22c55e' : 'transparent',
                                           borderColor: todo.completed ? '#22c55e' : '#d1d5db',
                                         }}
                                       >
-                                        {todo.completed && <Check className="w-3 h-3 text-white" />}
+                                        {todo.completed ? (
+                                          <svg viewBox="0 0 20 20" className="absolute inset-0 m-auto w-3 h-3 pointer-events-none" aria-hidden="true">
+                                            <polyline points="5 10.5 9 14.5 15.5 7" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                                          </svg>
+                                        ) : null}
                                       </button>
                                       <span
                                         className={`text-sm flex-1 truncate ${

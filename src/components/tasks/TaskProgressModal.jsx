@@ -319,14 +319,21 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
                     className="flex items-center gap-3 p-2.5 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors"
                   >
                     <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={todo.completed ? 'true' : 'false'}
                       onClick={() => handleToggleTodo(todo.id)}
-                      className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+                      className={`relative w-5 h-5 rounded-full border-2 shrink-0 transition-colors select-none ${
                         todo.completed
                           ? 'bg-green-500 border-green-500'
                           : 'border-slate-300 hover:border-primary-500'
                       }`}
                     >
-                      {todo.completed && <CheckCircle2 className="w-3 h-3 text-white" />}
+                      {todo.completed ? (
+                        <svg viewBox="0 0 20 20" className="absolute inset-0 m-auto w-3 h-3 pointer-events-none" aria-hidden="true">
+                          <polyline points="5 10.5 9 14.5 15.5 7" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      ) : null}
                     </button>
                     <span className={`flex-1 text-sm ${todo.completed ? 'line-through text-slate-400' : 'text-slate-700'}`}>
                       {todo.title}
