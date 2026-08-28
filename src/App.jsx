@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Routes, Route, Navigate, useSearchParams, useNavigate } from 'react-router-dom';
 import Layout from '@/components/layout/Layout';
 import DashboardPage from '@/pages/DashboardPage';
@@ -194,9 +194,14 @@ function SsoCallback() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [status, setStatus] = useState('正在登录…');
+  // 防重入锁：StrictMode 下 effect 会双调用，或路由重渲染可能重复触发；
+  // 一次性 ticket 只能消费一次，重复调用 ssoConsume 会 401 并报错跳登录，导致已登录用户被踢回仪表盘。
+  const handledRef = useRef(false);
 
   useEffect(() => {
+    if (handledRef.current) return;
     const redirect = searchParams.get('redirect') || '/';
+    handledRef.current = true;
     (async () => {
       try {
         // ticket 由 HttpOnly Cookie 自动携带（不出现在 URL）
@@ -214,7 +219,7 @@ function SsoCallback() {
           await useMemberStore.getState().fetchMembers();
         } catch (e) {
           console.warn('[SSO] fetchMembers 失败:', e?.message);
-       }
+        }
         try {
           await bootstrapAfterLogin();
         } catch (e) {
@@ -223,6 +228,12 @@ function SsoCallback() {
         navigate(redirect, { replace: true });
       } catch (err) {
         console.error('[SSO] 登录失败:', err);
+        // 双保险：若此前已通过 SSO 登录成功（如 StrictMode 二次 ssoConsume 失败），不要强行跳登录
+        if (useAuthStore.getState().isAuthenticated) {
+          const fallback = searchParams.get('redirect') || '/';
+          navigate(fallback, { replace: true });
+          return;
+        }
         setStatus('登录失败：' + (err?.message || '未知错误'));
         setTimeout(() => navigate('/login', { replace: true }), 2000);
       }
