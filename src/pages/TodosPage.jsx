@@ -84,6 +84,8 @@ export default function TodosPage() {
   );
 
   const taskActiveCount = activeTaskList.length;
+  const todoStartupCount = filteredTasks.filter((t) => t.status === 'todo').length;
+  const taskInProgressCount = filteredTasks.filter((t) => t.status === 'in_progress').length;
   const todoCompletedCount = sortedTodos.filter((t) => t.completed).length;
 
   const handleEdit = (todo) => {
