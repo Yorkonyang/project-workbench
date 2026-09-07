@@ -13,6 +13,7 @@ import { useRiskStore } from '@/store/useRiskStore';
 import { useResourceStore } from '@/store/useResourceStore';
 import { useMemberStore } from '@/store/useMemberStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
+import { useAuthStore } from '@/store/useAuthStore';
 import { CheckSquare, AlertTriangle, Flag, Users, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -25,6 +26,7 @@ export default function DashboardPage() {
   const resources = useResourceStore((s) => s.resources);
   const members = useMemberStore((s) => s.members);
   const notifications = useNotificationStore((s) => s.notifications);
+  const currentUserId = useAuthStore((s) => s.currentUserId);
 
   // Filter out archived projects and their related data
   const activeProjects = projects.filter((p) => !p.archived);
@@ -40,9 +42,10 @@ export default function DashboardPage() {
   const upcomingMilestones = activeMilestones.filter((m) => m.status === 'upcoming' || m.status === 'at_risk').length;
   const totalResources = activeResources.length;
 
-  // 仅统计活跃项目的通知（排除已归档项目关联的通知）
-  const unreadNotifs = notifications.filter((n) => !n.read && (!n.projectId || activeProjectIds.has(n.projectId))).length;
-  const totalActiveNotifs = notifications.filter((n) => !n.projectId || activeProjectIds.has(n.projectId)).length;
+  // 仅统计当前用户的活跃项目通知（排除已归档项目和不属于当前用户的通知）
+  const myNotifications = notifications.filter((n) => n.user_id === currentUserId);
+  const unreadNotifs = myNotifications.filter((n) => !n.read && (!n.projectId || activeProjectIds.has(n.projectId))).length;
+  const totalActiveNotifs = myNotifications.filter((n) => !n.projectId || activeProjectIds.has(n.projectId)).length;
 
   return (
     <PageContainer>
