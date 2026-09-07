@@ -20,6 +20,7 @@ import { useAccess } from '@/hooks/useAccess';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const { canViewProjectTasks } = useAccess();
   const projects = useProjectStore((s) => s.projects);
   const tasks = useTaskStore((s) => s.tasks);
   const milestones = useMilestoneStore((s) => s.milestones);
@@ -32,7 +33,10 @@ export default function DashboardPage() {
   // Filter out archived projects and their related data
   const activeProjects = projects.filter((p) => !p.archived);
   const activeProjectIds = new Set(activeProjects.map((p) => p.id));
-  const activeTasks = tasks.filter((t) => activeProjectIds.has(t.projectId));
+  const activeTasks = tasks.filter((t) => {
+    const proj = projects.find((p) => p.id === t.projectId);
+    return activeProjectIds.has(t.projectId) && canViewProjectTasks(proj);
+  });
   const activeMilestones = milestones.filter((m) => activeProjectIds.has(m.projectId));
   const activeRisks = risks.filter((r) => activeProjectIds.has(r.projectId));
   const activeResources = resources.filter((r) => activeProjectIds.has(r.projectId));
