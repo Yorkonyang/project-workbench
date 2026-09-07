@@ -16,6 +16,7 @@ import { useTodoStore } from '@/store/useTodoStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { CheckSquare, AlertTriangle, Flag, Users, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useAccess } from '@/hooks/useAccess';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
