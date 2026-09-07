@@ -558,7 +558,7 @@ const server = http.createServer(async (req, res) => {
             const projectsDeleted = toDelete.size;
             data.projects = data.projects.filter(p => !toDelete.has(p.id));
             saveData(data);
-            sendResponse(res, 200, { success: true, projectsDeleted, tasksDeleted: tasksToDelete.length });
+            sendResponse(res, 200, { success: true, projectsDeleted, tasksDeleted: tasksToDelete.length, risksDeleted: risksToDelete.length });
         } else {
             sendResponse(res, 404, { error: 'Project not found' });
         }

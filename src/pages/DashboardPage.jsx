@@ -39,7 +39,10 @@ export default function DashboardPage() {
   const openRisks = activeRisks.filter((r) => r.status !== 'closed').length;
   const upcomingMilestones = activeMilestones.filter((m) => m.status === 'upcoming' || m.status === 'at_risk').length;
   const totalResources = activeResources.length;
-  const unreadNotifs = notifications.filter((n) => !n.read).length;
+
+  // 仅统计活跃项目的通知（排除已归档项目关联的通知）
+  const unreadNotifs = notifications.filter((n) => !n.read && (!n.projectId || activeProjectIds.has(n.projectId))).length;
+  const totalActiveNotifs = notifications.filter((n) => !n.projectId || activeProjectIds.has(n.projectId)).length;
 
   return (
     <PageContainer>
