@@ -75,7 +75,7 @@ export default function DashboardPage() {
         <StatCard
           icon={Users}
           label="团队成员"
-          value={members.length}
+          value={assignedMemberCount}
           sublabel="个项目人员"
           color="#0D9488"
           onClick={() => navigate('/members')}
@@ -84,7 +84,7 @@ export default function DashboardPage() {
           icon={Bell}
           label="未完成事项"
           value={pendingItems}
-          sublabel={`进行中 ${inProgressTasks} + 待办 ${incompleteTodos}`}
+          sublabel={`进行中 ${inProgressTasks} + 待启动 ${todoTasks} + 待办 ${incompleteTodos}`}
           color="#D97706"
           onClick={() => navigate('/todos')}
         />

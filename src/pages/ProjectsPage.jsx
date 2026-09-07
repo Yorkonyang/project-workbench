@@ -16,7 +16,7 @@ import { useNavigate } from 'react-router-dom';
 import TaskProgressModal from '@/components/tasks/TaskProgressModal';
 import TaskForm from '@/components/tasks/TaskForm';
 
-const TASK_STATUS_LABEL = { todo: '待开始', in_progress: '进行中', review: '审核中', done: '已完成', blocked: '阻塞' };
+const TASK_STATUS_LABEL = { todo: '待启动', in_progress: '进行中', review: '审核中', done: '已完成', blocked: '阻塞' };
 const TASK_STATUS_COLOR = { todo: '#9ca3af', in_progress: '#378ADD', review: '#8b5cf6', done: '#1D9E75', blocked: '#ef4444' };
 
 function StatusBadge({ status, kind = 'project' }) {

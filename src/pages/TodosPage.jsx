@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, CheckCircle2, Clock, CalendarClock, CheckSquare, AlertTriangle } from 'lucide-react';
+import { Plus, CheckCircle2, Clock, CalendarClock, CheckSquare, AlertTriangle, Flag } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Button from '@/components/ui/Button';
 import StatCard from '@/components/ui/StatCard';
@@ -125,10 +125,11 @@ export default function TodosPage() {
   return (
     <PageContainer>
       {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
         <StatCard icon={AlertTriangle} label="待办逾期" value={todoOverdue.length} color="#ef4444" />
         <StatCard icon={Clock} label="待办今日到期" value={todoDueToday.length} color="#f59e0b" />
-        <StatCard icon={CheckCircle2} label="任务进行中" value={taskActiveCount} color="#3b82f6" />
+        <StatCard icon={Flag} label="启动任务" value={todoStartupCount} color="#8b5cf6" />
+        <StatCard icon={CheckCircle2} label="任务进行中" value={taskInProgressCount} color="#3b82f6" />
         <StatCard icon={CalendarClock} label="已完成待办" value={todoCompletedCount} color="#10b981" />
       </div>
 

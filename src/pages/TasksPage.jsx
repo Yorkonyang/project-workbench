@@ -18,7 +18,7 @@ import { useAccess } from '@/hooks/useAccess';
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
-  { value: 'todo', label: '待开始' },
+  { value: 'todo', label: '待启动' },
   { value: 'in_progress', label: '进行中' },
   { value: 'review', label: '审核中' },
   { value: 'done', label: '已完成' },

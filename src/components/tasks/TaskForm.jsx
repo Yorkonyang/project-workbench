@@ -107,7 +107,7 @@ export default function TaskForm({ onClose, task = null, defaultProjectId = null
           value={form.status}
           onChange={set('status')}
           options={[
-            { value: 'todo', label: '待开始' },
+            { value: 'todo', label: '待启动' },
             { value: 'in_progress', label: '进行中' },
             { value: 'review', label: '审核中' },
             { value: 'done', label: '已完成' },

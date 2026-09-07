@@ -21,7 +21,7 @@ export const PRIORITY_CONFIG = {
 
 // Task status mapping
 export const TASK_STATUS_CONFIG = {
-  todo: { label: '待办', color: '#6b7280', bgClass: 'bg-slate-100', textClass: 'text-slate-600', dotClass: 'bg-slate-400' },
+  todo: { label: '待启动', color: '#6b7280', bgClass: 'bg-slate-100', textClass: 'text-slate-600', dotClass: 'bg-slate-400' },
   in_progress: { label: '进行中', color: '#3b82f6', bgClass: 'bg-blue-50', textClass: 'text-blue-600', dotClass: 'bg-blue-500' },
   review: { label: '评审中', color: '#8b5cf6', bgClass: 'bg-purple-50', textClass: 'text-purple-600', dotClass: 'bg-purple-500' },
   done: { label: '已完成', color: '#10b981', bgClass: 'bg-green-50', textClass: 'text-green-600', dotClass: 'bg-green-500' },

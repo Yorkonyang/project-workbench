@@ -214,7 +214,7 @@ export default function TodoList({ items, onEditTodo, onDeleteTodo, onToggleTodo
         {tasks.map((task) => {
           const priConfig = getPriorityConfig(task.priority);
           const statusConfig = {
-            todo: { label: '待开始', bgClass: 'bg-slate-100', textClass: 'text-slate-600' },
+            todo: { label: '待启动', bgClass: 'bg-slate-100', textClass: 'text-slate-600' },
             in_progress: { label: '进行中', bgClass: 'bg-blue-100', textClass: 'text-blue-600' },
             review: { label: '审核中', bgClass: 'bg-purple-100', textClass: 'text-purple-600' },
             done: { label: '已完成', bgClass: 'bg-green-100', textClass: 'text-green-600' },

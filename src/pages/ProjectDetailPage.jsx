@@ -404,7 +404,7 @@ export default function ProjectDetailPage() {
                   <div className="text-center text-sm text-slate-400 py-4">暂无任务</div>
                 )}
                 {tasks.slice(0, 5).map((t) => {
-                  const statusLabel = { todo: '待开始', in_progress: '进行中', review: '审核中', done: '已完成', blocked: '阻塞' }[t.status] || t.status;
+                  const statusLabel = { todo: '待启动', in_progress: '进行中', review: '审核中', done: '已完成', blocked: '阻塞' }[t.status] || t.status;
                   return (
                     <div
                       key={t.id}
