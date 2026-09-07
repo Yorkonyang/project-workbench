@@ -12,7 +12,7 @@ import { useMilestoneStore } from '@/store/useMilestoneStore';
 import { useRiskStore } from '@/store/useRiskStore';
 import { useResourceStore } from '@/store/useResourceStore';
 import { useMemberStore } from '@/store/useMemberStore';
-import { useNotificationStore } from '@/store/useNotificationStore';
+import { useTodoStore } from '@/store/useTodoStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { CheckSquare, AlertTriangle, Flag, Users, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -25,8 +25,8 @@ export default function DashboardPage() {
   const risks = useRiskStore((s) => s.risks);
   const resources = useResourceStore((s) => s.resources);
   const members = useMemberStore((s) => s.members);
-  const notifications = useNotificationStore((s) => s.notifications);
   const currentUserId = useAuthStore((s) => s.currentUserId);
+  const todos = useTodoStore((s) => s.todos);
 
   // Filter out archived projects and their related data
   const activeProjects = projects.filter((p) => !p.archived);
@@ -42,10 +42,10 @@ export default function DashboardPage() {
   const upcomingMilestones = activeMilestones.filter((m) => m.status === 'upcoming' || m.status === 'at_risk').length;
   const totalResources = activeResources.length;
 
-  // 仅统计当前用户的活跃项目通知（排除已归档项目和不属于当前用户的通知）
-  const myNotifications = notifications.filter((n) => n.user_id === currentUserId);
-  const unreadNotifs = myNotifications.filter((n) => !n.read && (!n.projectId || activeProjectIds.has(n.projectId))).length;
-  const totalActiveNotifs = myNotifications.filter((n) => !n.projectId || activeProjectIds.has(n.projectId)).length;
+  // 未完成事项 = 进行中的任务 + 未完成的待办
+  const inProgressTasks = activeTasks.filter((t) => (t.assignees?.includes(currentUserId) || t.assignee === currentUserId) && t.status === 'in_progress').length;
+  const incompleteTodos = todos.filter((t) => t.assignee === currentUserId && !t.completed).length;
+  const pendingItems = inProgressTasks + incompleteTodos;
 
   return (
     <PageContainer>
@@ -82,9 +82,9 @@ export default function DashboardPage() {
         />
         <StatCard
           icon={Bell}
-          label="未读通知"
-          value={unreadNotifs}
-          sublabel={`共 ${notifications.length} 条`}
+          label="未完成事项"
+          value={pendingItems}
+          sublabel={`进行中 ${inProgressTasks} + 待办 ${incompleteTodos}`}
           color="#D97706"
           onClick={() => navigate('/todos')}
         />
