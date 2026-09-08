@@ -20,7 +20,7 @@ import { useAccess } from '@/hooks/useAccess';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const { canViewProjectTasks } = useAccess();
+  const { canViewProjectTasks, canViewTodo } = useAccess();
   const projects = useProjectStore((s) => s.projects);
   const tasks = useTaskStore((s) => s.tasks);
   const milestones = useMilestoneStore((s) => s.milestones);
@@ -47,10 +47,10 @@ export default function DashboardPage() {
   const upcomingMilestones = activeMilestones.filter((m) => m.status === 'upcoming' || m.status === 'at_risk').length;
   const totalResources = activeResources.length;
 
-  // 未完成事项 = 进行中任务 + 待启动任务 + 未完成待办（均为当前用户）
-  const inProgressTasks = activeTasks.filter((t) => (t.assignees?.includes(currentUserId) || t.assignee === currentUserId) && t.status === 'in_progress').length;
-  const todoTasks = activeTasks.filter((t) => (t.assignees?.includes(currentUserId) || t.assignee === currentUserId) && t.status === 'todo').length;
-  const incompleteTodos = todos.filter((t) => t.assignee === currentUserId && !t.completed).length;
+  // 未完成事项 = 进行中任务 + 待启动任务 + 未完成待办（均使用 TodosPage 的可见性逻辑）
+  const inProgressTasks = activeTasks.filter((t) => t.status === 'in_progress').length;
+  const todoTasks = activeTasks.filter((t) => t.status === 'todo').length;
+  const incompleteTodos = todos.filter((t) => !t.completed && canViewTodo(t)).length;
   const pendingItems = inProgressTasks + todoTasks + incompleteTodos;
 
   // 团队成员 = 被分配任务或待办的人员去重计数（排除纯企微同步的虚高人数）
