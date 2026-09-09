@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Plus, Archive, RotateCcw, FileText, X, ChevronRight, ChevronDown, Edit2, Trash2, ExternalLink } from 'lucide-react';
+import { Plus, Archive, RotateCcw, FileText, X, ChevronRight, ChevronDown, Edit2, Trash2, ExternalLink, Calendar, User } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Button from '@/components/ui/Button';
 import ProjectForm from '@/components/projects/ProjectForm';
@@ -12,7 +12,7 @@ import { useMemberStore } from '@/store/useMemberStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useTodoStore } from '@/store/useTodoStore';
-import { cn, isOverdue, dueDateLabel, getProjectStatusConfig } from '@/lib/utils';
+import { cn, isOverdue, dueDateLabel, getProjectStatusConfig, formatDate } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
 import TaskProgressModal from '@/components/tasks/TaskProgressModal';
 import TaskForm from '@/components/tasks/TaskForm';
@@ -420,14 +420,16 @@ export default function ProjectsPage() {
                   </button>
                   {/* 新增：项目负责人信息 */}
                   {project.ownerId && (
-                    <span className="text-xs text-slate-500 whitespace-nowrap">
-                      负责人：{members.find(m => m.id === project.ownerId)?.name || project.ownerId}
+                    <span className="text-xs text-slate-500 whitespace-nowrap flex items-center gap-1">
+                      <User className="w-3 h-3" />
+                      {members.find(m => m.id === project.ownerId)?.name || project.ownerId}
                     </span>
                   )}
-                  {/* 新增：起始日期信息 */}
-                  {project.startDate && (
-                    <span className="text-xs text-slate-500 whitespace-nowrap">
-                      {new Date(project.startDate).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })}
+                  {/* 新增：日期范围信息（开始时间 ~ 结束时间） */}
+                  {(project.startDate || project.endDate) && (
+                    <span className="text-xs text-slate-500 whitespace-nowrap flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      {formatDate(project.startDate)} ~ {formatDate(project.endDate)}
                     </span>
                   )}
                   {/* 新增：总体进度信息 */}
