@@ -356,6 +356,11 @@ export default function ProjectsPage() {
             const isProjectExpanded = expandedProjects[project.id] !== false; // 默认展开
             const taskTotal = projectTasks.length;
             const taskDone = projectTasks.filter((t) => t.status === 'done').length;
+            // 计算项目总体进度（基于任务完成率）
+            const progress = taskTotal > 0 ? Math.round((taskDone / taskTotal) * 100) : 0;
+            // 获取项目负责人
+            const owner = members.find((m) => m.id === project.ownerId);
+            const ownerName = owner?.name || project.ownerId || '未设置';
 
             return (
               <div key={project.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -412,6 +417,24 @@ export default function ProjectsPage() {
                       </span>
                     )}
                   </button>
+                  {/* 新增：项目负责人信息 */}
+                  {project.ownerId && (
+                    <span className="text-xs text-slate-500 whitespace-nowrap">
+                      负责人：{members.find(m => m.id === project.ownerId)?.name || project.ownerId}
+                    </span>
+                  )}
+                  {/* 新增：起始日期信息 */}
+                  {project.startDate && (
+                    <span className="text-xs text-slate-500 whitespace-nowrap">
+                      {new Date(project.startDate).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })}
+                    </span>
+                  )}
+                  {/* 新增：总体进度信息 */}
+                  {taskTotal > 0 && (
+                    <span className="text-xs text-slate-600 font-medium whitespace-nowrap">
+                      总体进度：{Math.round((taskDone / taskTotal) * 100)}%
+                    </span>
+                  )}
                   {/* 最右端：进入项目详情 */}
                   <button
                     onClick={(e) => {
