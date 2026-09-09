@@ -8,6 +8,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useAccess } from '@/hooks/useAccess';
 import { useAuthStore } from '@/store/useAuthStore';
+import { useMemberStore } from '@/store/useMemberStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useTodoStore } from '@/store/useTodoStore';
@@ -56,7 +57,7 @@ export default function ProjectsPage() {
   const deleteProject = useProjectStore((s) => s.deleteProject);
   const directArchive = useProjectStore((s) => s.directArchive);
   const currentUserId = useAuthStore((s) => s.currentUserId);
-  const members = useAuthStore((s) => s.members || []);
+  const members = useMemberStore((s) => s.members || []);
   const addNotification = useNotificationStore((s) => s.addNotification);
 
   const tasks = useTaskStore((s) => s.tasks);
