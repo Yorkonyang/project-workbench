@@ -2,12 +2,13 @@ import { useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
-import { Check, X } from 'lucide-react';
+import { Check, X, AlertTriangle } from 'lucide-react';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useMemberStore } from '@/store/useMemberStore';
 import { useDictionaryStore } from '@/store/useDictionaryStore';
 import MultiSelect from '@/components/ui/MultiSelect';
 import { buildMemberOptions, getPinnedValueSet, pinMemberId } from '@/lib/pinnedMembers';
+import { MAX_DEPTH } from '@/lib/hierarchy';
 
 const COLORS = [
   { value: '#3b82f6', label: '蓝色' },
