@@ -5,6 +5,7 @@ import ProjectBreadcrumb from '@/components/projects/ProjectBreadcrumb';
 import { getMilestoneStatusConfig, formatDate, getProjectColor } from '@/lib/utils';
 import { isMilestoneDone } from '@/config/theme';
 import { useAccess } from '@/hooks/useAccess';
+import { getLevel } from '@/lib/hierarchy';
 
 export default function MilestoneList({ milestones, projects, onEdit, onDelete }) {
   const { canManageMilestone } = useAccess();
@@ -49,8 +50,9 @@ export default function MilestoneList({ milestones, projects, onEdit, onDelete }
                   </td>
                   <td className="py-2.5 px-3">
                     {project && (
-                      <span className="flex items-center gap-1 text-xs text-slate-600">
+                      <span className="flex items-center gap-1 text-xs text-slate-600 font-mono">
                         <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: project.color }} />
+                        <span className="whitespace-pre">{'  '.repeat(getLevel(projects || [], project.id) * 2)}</span>
                         {project.code}
                       </span>
                     )}

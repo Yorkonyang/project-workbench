@@ -8,7 +8,7 @@ import { useMemberStore } from '@/store/useMemberStore';
 import { useDictionaryStore } from '@/store/useDictionaryStore';
 import MultiSelect from '@/components/ui/MultiSelect';
 import { buildMemberOptions, getPinnedValueSet, pinMemberId } from '@/lib/pinnedMembers';
-import { MAX_DEPTH } from '@/lib/hierarchy';
+import { MAX_DEPTH, normalizeParent } from '@/lib/hierarchy';
 
 const COLORS = [
   { value: '#3b82f6', label: '蓝色' },
@@ -43,7 +43,8 @@ export default function ProjectForm({ project, onClose, onSave, parentProjectId 
   // 新建子项目时，预置 parentProjectId；其余情况沿用已有（或空=根项目）
   const [formData, setFormData] = useState(() => {
     const base = {
-      code: project?.code || generateProjectCode(),
+      // 子项目编号引用父编号（XM_001 → XM_001.1）；根项目保持全局顺序 XM_NNN
+      code: project?.code || generateProjectCode(isSubProject ? parentProjectId : ''),
       name: '',
       description: '',
       startDate: '',
@@ -68,6 +69,15 @@ export default function ProjectForm({ project, onClose, onSave, parentProjectId 
     }
     return base;
   });
+
+  // 新建项目切换隶属项目时，项目编号随新父编号联动重算（编辑项目 code 固定不变，跳过）
+  // 注意：此处仅在用户手动切换「隶属项目」下拉时触发；父项目继承（manager/ownerId 等）
+  // 已在初始化时完成，切换后不再重新继承，避免误覆盖用户已填内容
+  useEffect(() => {
+    if (project) return;
+    setFormData((prev) => ({ ...prev, code: generateProjectCode(normalizeParent(prev.parentProjectId)) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.parentProjectId]);
 
   const handleTypeChange = (e) => {
     const nextTypeId = e.target.value;

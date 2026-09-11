@@ -36,10 +36,26 @@ export const useProjectStore = create(
         return project;
       },
 
-      // 生成下一个项目编号 XM_001 / XM_002 ...
-      generateProjectCode: () => {
+      // 生成项目编号：
+      //  - 根项目：全局顺序 XM_001 / XM_002 ...
+      //  - 子项目：父编号 + '.' + 同级序号（单数字），如 XM_001 → XM_001.1、XM_001.1 → XM_001.1.1
+      generateProjectCode: (parentProjectId = '') => {
         const prefix = 'XM_';
         const existing = get().projects || [];
+        const normalizedParent = hierarchy.normalizeParent(parentProjectId);
+        if (normalizedParent) {
+          const parent = existing.find((p) => p.id === normalizedParent);
+          const parentCode = parent?.code || '';
+          // 同级已占用序号：code 形如 <parentCode>.N（N 为纯数字），取 max+1
+          const maxSeq = existing.reduce((max, p) => {
+            const c = p.code || '';
+            if (!c.startsWith(parentCode + '.')) return max;
+            const suffix = c.slice(parentCode.length + 1);
+            if (!/^\d+$/.test(suffix)) return max;
+            return Math.max(max, parseInt(suffix, 10));
+          }, 0);
+          return hierarchy.formatHierarchyCode(parentCode, maxSeq + 1);
+        }
         const maxNum = existing.reduce((max, p) => {
           const m = (p.code || '').match(/^XM_(\d+)$/);
           if (m) {

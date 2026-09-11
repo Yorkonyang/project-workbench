@@ -5,6 +5,7 @@ import { Flag, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isMilestoneDone } from '@/config/theme';
 import { buildProjectThemeMap } from '@/lib/projectTheme';
+import { getLevel } from '@/lib/hierarchy';
 
 export default function GanttView({ tasks, milestones, projects }) {
   const navigate = useNavigate();
@@ -270,6 +271,12 @@ export default function GanttView({ tasks, milestones, projects }) {
           <div className="divide-y divide-slate-50">
             {groupByProject.map(([projectId, items], projectIdx) => {
               const theme = getProjectTheme(projectIdx);
+              const curProject = (projects || []).find((p) => p.id === projectId);
+              // 层级缩进：每级 8 空格（≈2 个英文字符宽）；子项目比父项目缩进一级，任务与所属项目左对齐
+              const level = getLevel(projects || [], projectId);
+              const indent = ' '.repeat(level * 8);
+              // 项目编号前缀（无编号时不显示）
+              const codePrefix = curProject?.code ? `${curProject.code} ` : '';
               return (
               <div key={projectId}>
                 {/* Summary Row */}
@@ -283,10 +290,8 @@ export default function GanttView({ tasks, milestones, projects }) {
                 >
                   <div className={cn("w-48 shrink-0 px-4 py-2 border-r flex items-center sticky left-0 z-30", theme.nameBg, "text-white")}>
                     <p className="text-sm font-medium truncate">
-                      {(() => {
-                        const project = projects?.find((p) => p.id === projectId);
-                        return project?.name || projectId;
-                      })()}
+                      <span className="whitespace-pre">{indent}{codePrefix}</span>
+                      <span>{curProject?.name || projectId}</span>
                     </p>
                   </div>
                   <div className="flex-1 relative" style={{ width: totalWidth, height: summaryRowHeight }}>
@@ -345,6 +350,7 @@ export default function GanttView({ tasks, milestones, projects }) {
                       <div className={cn("w-48 shrink-0 px-4 py-2 border-r flex items-center sticky left-0 z-30", theme.rowEven)}>
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium text-slate-700 truncate flex items-center gap-1.5">
+                            <span className="whitespace-pre shrink-0">{indent}</span>
                             {item.type === 'milestone' && (
                               <Flag
                                 className="w-3.5 h-3.5 shrink-0"
@@ -355,7 +361,7 @@ export default function GanttView({ tasks, milestones, projects }) {
                                 }}
                               />
                             )}
-                            {item.title}
+                            <span className="truncate">{item.title}</span>
                           </p>
                           <p className="text-[10px] text-slate-400 font-mono">
                             {item.startDate}
