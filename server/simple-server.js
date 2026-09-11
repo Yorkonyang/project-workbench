@@ -341,7 +341,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Projects API
-    if (pathname.startsWith('/api/projects') && method === 'GET') {
+    // 仅匹配 列表(GET /api/projects) 或 单项目详情(GET /api/projects/:id)（≤3 段）
+    // 4 段子路径（/merge-preview、/merge、/subtree、/children 等）交给后面专门路由
+    if ((pathname === '/api/projects' || pathname.match(/^\/api\/projects\/[\w-]+$/)) && method === 'GET') {
         const data = loadData();
         const userId = ac.getUserId(req, url);
         const projectId = pathname.match(/\/api\/projects\/([^\/]+)/)?.[1];
@@ -751,7 +753,7 @@ const server = http.createServer(async (req, res) => {
             const projectsDeleted = toDelete.size;
             data.projects = data.projects.filter(p => !toDelete.has(p.id));
             saveData(data);
-            sendResponse(res, 200, { success: true, projectsDeleted, tasksDeleted: tasksToDelete.length, risksDeleted: risksToDelete.length });
+            sendResponse(res, 200, { success: true, projectsDeleted, tasksDeleted: tasksToDelete.length });
         } else {
             sendResponse(res, 404, { error: 'Project not found' });
         }
