@@ -12,6 +12,7 @@ import { useMilestoneStore } from '@/store/useMilestoneStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useAccess } from '@/hooks/useAccess';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { getDescendants } from '@/lib/hierarchy';
 
 export default function TimelinePage() {
   const navigate = useNavigate();
@@ -33,6 +34,8 @@ export default function TimelinePage() {
   // 读取 URL query 参数
   const projectIdFromUrl = searchParams.get('projectId');
   const [projectFilter, setProjectFilter] = useState(projectIdFromUrl || '');
+  // 含子项目：选中项目扩展为其「自身 + 全部子孙」集合
+  const [includeSub, setIncludeSub] = useState(false);
 
   // 如果来自 URL，锁定选择器
   const isLocked = !!projectIdFromUrl;
@@ -48,10 +51,20 @@ export default function TimelinePage() {
   );
   const activeProjectIds = new Set(taskVisibleProjects.map((p) => p.id));
 
+  // 含子项目：选中项目扩展为其「自身 + 全部子孙」集合；未选项目或不含子项目时为 null（不过滤）
+  const includedProjectIds = useMemo(() => {
+    if (!projectFilter) return null;
+    if (!includeSub) return new Set([projectFilter]);
+    const ids = new Set([projectFilter, ...getDescendants(projects, projectFilter).map((d) => d.id)]);
+    return ids;
+  }, [projectFilter, includeSub, projects]);
+
+  const inScope = (pid) => (includedProjectIds ? includedProjectIds.has(pid) : true);
+
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
       const pid = t.projectId || t.project_id;
-      if (projectFilter && pid !== projectFilter) return false;
+      if (!inScope(pid)) return false;
       const proj = projects.find((p) => p.id === pid);
       if (!canViewProjectTasks(proj)) return false;
       if (canManageProject(proj)) return true;
@@ -60,14 +73,14 @@ export default function TimelinePage() {
         ? t.assignees.includes(currentUserId)
         : t.assignee === currentUserId;
     });
-  }, [tasks, projects, projectFilter, canViewProjectTasks, canManageProject, currentUserId]);
+  }, [tasks, projects, includedProjectIds, canViewProjectTasks, canManageProject, currentUserId]);
 
   const filteredMilestones = useMemo(() => {
     return milestones.filter((m) => {
-      if (projectFilter && m.projectId !== projectFilter) return false;
+      if (!inScope(m.projectId)) return false;
       return activeProjectIds.has(m.projectId);
     });
-  }, [milestones, projectFilter, activeProjectIds]);
+  }, [milestones, includedProjectIds, activeProjectIds]);
 
   const filteredProjects = taskVisibleProjects;
 
@@ -108,17 +121,29 @@ export default function TimelinePage() {
 
   return (
     <PageContainer>
-      <div className="flex items-center justify-between mb-4">
-        <Select
-          value={projectFilter}
-          onChange={setProjectFilter}
-          disabled={isLocked}
-          options={[
-            { value: '', label: '全部项目' },
-            ...taskVisibleProjects.map((p) => ({ value: p.id, label: p.name })),
-          ]}
-          className="w-40"
-        />
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Select
+            value={projectFilter}
+            onChange={setProjectFilter}
+            disabled={isLocked}
+            options={[
+              { value: '', label: '全部项目' },
+              ...taskVisibleProjects.map((p) => ({ value: p.id, label: p.name })),
+            ]}
+            className="w-40"
+          />
+          <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={includeSub}
+              disabled={!projectFilter || isLocked}
+              onChange={(e) => setIncludeSub(e.target.checked)}
+              className="accent-blue-500"
+            />
+            含子项目
+          </label>
+        </div>
         {canCreateMilestone && (
           <Button size="sm" onClick={() => { setEditingMilestone(null); setShowForm(true); }}>
             <Plus className="w-4 h-4" />

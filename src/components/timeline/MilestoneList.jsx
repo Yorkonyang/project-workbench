@@ -1,6 +1,7 @@
 import { Flag, Edit2, Trash2 } from 'lucide-react';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
+import ProjectBreadcrumb from '@/components/projects/ProjectBreadcrumb';
 import { getMilestoneStatusConfig, formatDate, getProjectColor } from '@/lib/utils';
 import { isMilestoneDone } from '@/config/theme';
 import { useAccess } from '@/hooks/useAccess';
@@ -17,6 +18,7 @@ export default function MilestoneList({ milestones, projects, onEdit, onDelete }
             <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
               <th className="py-2 px-3 font-medium">里程碑</th>
               <th className="py-2 px-3 font-medium">项目</th>
+              <th className="py-2 px-3 font-medium hidden lg:table-cell">层级</th>
               <th className="py-2 px-3 font-medium">日期</th>
               <th className="py-2 px-3 font-medium">状态</th>
               <th className="py-2 px-3 font-medium hidden md:table-cell">交付物</th>
@@ -52,6 +54,9 @@ export default function MilestoneList({ milestones, projects, onEdit, onDelete }
                         {project.code}
                       </span>
                     )}
+                  </td>
+                  <td className="py-2.5 px-3 hidden lg:table-cell">
+                    <ProjectBreadcrumb projectId={ms.projectId} projects={projects} includeSelf={false} className="max-w-[200px]" />
                   </td>
                   <td className="py-2.5 px-3 text-slate-500">{formatDate(ms.date)}</td>
                   <td className="py-2.5 px-3">

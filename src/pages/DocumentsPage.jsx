@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Plus, Search, Download } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Button from '@/components/ui/Button';
@@ -10,6 +10,7 @@ import { useDocumentStore } from '@/store/useDocumentStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useAccess } from '@/hooks/useAccess';
+import { getDescendants } from '@/lib/hierarchy';
 
 export default function DocumentsPage() {
   const documents = useDocumentStore((s) => s.documents);
@@ -21,6 +22,8 @@ export default function DocumentsPage() {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [projectFilter, setProjectFilter] = useState('');
+  // 含子项目：选中项目扩展为其「自身 + 全部子孙」集合
+  const [includeSub, setIncludeSub] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingDoc, setEditingDoc] = useState(null);
 
@@ -43,12 +46,21 @@ export default function DocumentsPage() {
 
   const categories = [...new Set(documents.map((d) => d.category).filter(Boolean))];
 
+  // 含子项目：选中项目扩展为其「自身 + 全部子孙」集合；未选或不含子项目时为 null（不过滤）
+  const includedProjectIds = useMemo(() => {
+    if (!projectFilter) return null;
+    if (!includeSub) return new Set([projectFilter]);
+    const ids = new Set([projectFilter, ...getDescendants(projects, projectFilter).map((d) => d.id)]);
+    return ids;
+  }, [projectFilter, includeSub, projects]);
+  const inScope = (pid) => (includedProjectIds ? includedProjectIds.has(pid) : true);
+
   const filteredDocs = documents.filter((doc) => {
     // 权限：成员仅可看自己添加的文档；owner/admin 可见项目全部
     if (!canViewDocument(doc)) return false;
     // 过滤已归档项目的文档
     if (doc.projectId && !activeProjectIds.has(doc.projectId)) return false;
-    if (projectFilter && doc.projectId !== projectFilter) return false;
+    if (!inScope(doc.projectId)) return false;
     if (categoryFilter && doc.category !== categoryFilter) return false;
     if (search) {
       const s = search.toLowerCase();
@@ -121,6 +133,16 @@ export default function DocumentsPage() {
           ]}
           className="w-36"
         />
+        <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={includeSub}
+            disabled={!projectFilter}
+            onChange={(e) => setIncludeSub(e.target.checked)}
+            className="accent-blue-500"
+          />
+          含子项目
+        </label>
         <Select
           value={categoryFilter}
           onChange={setCategoryFilter}

@@ -1,5 +1,6 @@
 import { FileText, Edit2, Trash2, Download } from 'lucide-react';
 import Badge from '@/components/ui/Badge';
+import ProjectBreadcrumb from '@/components/projects/ProjectBreadcrumb';
 import { formatDate, getProjectColor } from '@/lib/utils';
 import { useAccess } from '@/hooks/useAccess';
 
@@ -78,6 +79,8 @@ export default function DocumentGrid({ documents, projects, onEdit, onDelete }) 
                 </span>
               )}
             </div>
+            {/* 隶属路径：子项目文档显示祖先链（根项目无祖先时不显示） */}
+            <ProjectBreadcrumb projectId={doc.projectId} projects={projects} includeSelf={false} className="mb-2" />
 
             {/* 附件列表 */}
             {hasFile && (

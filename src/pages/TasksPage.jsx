@@ -15,6 +15,7 @@ import { useTaskStore } from '@/store/useTaskStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useMemberStore } from '@/store/useMemberStore';
 import { useAccess } from '@/hooks/useAccess';
+import { getDescendants } from '@/lib/hierarchy';
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
@@ -78,8 +79,18 @@ export default function TasksPage() {
   );
   const activeTasks = tasks.filter((t) => activeProjectIds.has(t.projectId || t.project_id));
 
+  // 含子项目：选中项目扩展为其「自身 + 全部子孙」集合（用 getDescendants + 自身）
+  const includedProjectIds = useMemo(() => {
+    if (!projectFilter) return null;
+    if (!includeSub) return new Set([projectFilter]);
+    const descendants = getDescendants(projects, projectFilter);
+    const ids = new Set([projectFilter, ...descendants.map((d) => d.id)]);
+    return ids;
+  }, [projectFilter, includeSub, projects]);
+
   const filteredTasks = activeTasks.filter((t) => {
-    if (projectFilter && t.projectId !== projectFilter) return false;
+    const pid = t.projectId || t.project_id;
+    if (includedProjectIds && !includedProjectIds.has(pid)) return false;
     if (statusFilter && t.status !== statusFilter) return false;
     if (priorityFilter && t.priority !== priorityFilter) return false;
     if (search && !t.title.toLowerCase().includes(search.toLowerCase())) return false;
@@ -146,6 +157,16 @@ export default function TasksPage() {
             ]}
             className="w-36"
           />
+          <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={includeSub}
+              disabled={!projectFilter}
+              onChange={(e) => setIncludeSub(e.target.checked)}
+              className="accent-blue-500"
+            />
+            含子项目
+          </label>
           <Select
             value={statusFilter}
             onChange={setStatusFilter}
