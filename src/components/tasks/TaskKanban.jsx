@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import TaskCard from './TaskCard';
+import ProjectBreadcrumb from '@/components/projects/ProjectBreadcrumb';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { TASK_STATUS_CONFIG, TASK_STATUS_ORDER } from '@/config/theme';
