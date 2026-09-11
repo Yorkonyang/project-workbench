@@ -146,6 +146,24 @@ export const useProjectStore = create(
         return result;
       },
 
+      // 查询某目标项目下可撤销的合并日志（未撤销且 24h 未过期）
+      getMerges: async (targetId) => {
+        return apiClient.getMerges({ targetId });
+      },
+
+      // 撤销合并：调后端回滚，成功后刷新全部相关缓存（源项目复活、实体归属还原、子项目挂接还原）
+      undoMerge: async (mergeId) => {
+        const result = await apiClient.undoMerge(mergeId);
+        await get().fetchProjects();
+        await useTaskStore.getState().fetchTasks();
+        await useTodoStore.getState().fetchTodos();
+        await useDocumentStore.getState().fetchDocuments();
+        await useMilestoneStore.getState().fetchMilestones();
+        await useRiskStore.getState().fetchRisks();
+        await useResourceStore.getState().fetchResources();
+        return result;
+      },
+
       // ===== 层级辅助方法（统一委托 hierarchy，避免双真源）=====
       getProjectLevel: (id) => hierarchy.getLevel(get().projects, id),
       getChildren: (id) => hierarchy.getChildren(get().projects, id),

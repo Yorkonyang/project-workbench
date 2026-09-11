@@ -142,6 +142,54 @@ async function test4_antiCycle() {
   console.log(`  ✅ 清理 P1/P2/P3`);
 }
 
+async function test5_undoMerge() {
+  console.log('\n📋 测试 5: 合并撤销（T13，24h 限时回滚）');
+
+  // 5.1 建父/子 + 子项目任务
+  const parent = await request('POST', '/projects', { name: '验证-撤销父', code: 'VPD', stage: '规划中' });
+  const child = await request('POST', '/projects', {
+    name: '验证-撤销子', code: 'VCD', parentProjectId: parent.id, stage: '规划中'
+  });
+  await request('POST', `/projects/${child.id}/tasks`, { name: '撤销测试任务', stage: '进行中' });
+  console.log(`  ✅ 父=${parent.id}, 子=${child.id}, 已建子项目任务`);
+
+  // 5.2 执行合并（子 → 父），拿到 mergeId
+  const merge = await request('POST', `/projects/${child.id}/merge`, { targetId: parent.id, strategy: 'keep' });
+  console.log(`  ✅ 合并成功, mergeId=${merge.mergeId}`);
+  console.log(`  📊 目标项目任务数（合并后）: ${Array.isArray(await request('GET', `/projects/${parent.id}/tasks`)) ? (await request('GET', `/projects/${parent.id}/tasks`)).length : 'n/a'}`);
+
+  // 5.3 查询可撤销日志
+  const logs = await request('GET', `/merges?targetId=${parent.id}`);
+  console.log(`  📊 GET /merges?targetId= 返回 ${logs.length} 条可撤销项`);
+  const log0 = logs.find(l => l.id === merge.mergeId);
+  console.log(`  ✅ 日志存在且 sourceId 正确: ${log0?.sourceId === child.id}`);
+
+  // 5.4 撤销
+  const undoRes = await request('POST', `/merges/${merge.mergeId}/undo`);
+  console.log(`  ✅ 撤销响应: success=${undoRes.success}, restored=${JSON.stringify(undoRes.restoredCounts)}`);
+
+  // 5.5 验证源项目复活 + 任务归属还原
+  const defaultList = await request('GET', '/projects');
+  const revived = defaultList.find(p => p.id === child.id);
+  console.log(`  ✅ 源项目在默认列表复活: ${!!revived}`);
+  console.log(`  ✅ 复活后无 mergedInto: ${!revived?.mergedInto}`);
+  const parentTasks = await request('GET', `/projects/${parent.id}/tasks`);
+  const childTasks = await request('GET', `/projects/${child.id}/tasks`);
+  const parentTaskCount = Array.isArray(parentTasks) ? parentTasks.length : parentTasks.tasks?.length;
+  const childTaskCount = Array.isArray(childTasks) ? childTasks.length : childTasks.tasks?.length;
+  console.log(`  📊 父项目任务数（撤销后）: ${parentTaskCount}, 子项目任务数（撤销后）: ${childTaskCount}`);
+  console.log(`  ✅ 任务已还原到源项目: ${childTaskCount === 1}`);
+
+  // 5.6 重复撤销应 409
+  const redo = await request('POST', `/merges/${merge.mergeId}/undo`);
+  console.log(`  ✅ 重复撤销被拒: ${redo.success === false ? redo.error : '未拒绝!'}`);
+
+  // 5.7 清理
+  await request('DELETE', `/projects/${parent.id}`);
+  await request('DELETE', `/projects/${child.id}`);
+  console.log(`  ✅ 清理父/子项目`);
+}
+
 async function main() {
   console.log('=== 子项目功能后端验证 ===\n');
 
@@ -159,6 +207,9 @@ async function main() {
 
     // 测试 4: 闭环检测
     await test4_antiCycle();
+
+    // 测试 5: 合并撤销（T13）
+    await test5_undoMerge();
 
     // 清理临时项目
     await cleanup();

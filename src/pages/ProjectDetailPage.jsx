@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Calendar, User, Flag, CheckSquare, FolderOpen, AlertTriangle, Users, Edit2, Plus, Archive, Bell, Clock, Trash2, GitMerge } from 'lucide-react';
+import { ArrowLeft, Calendar, User, Flag, CheckSquare, FolderOpen, AlertTriangle, Users, Edit2, Plus, Archive, Bell, Clock, Trash2, GitMerge, RotateCcw } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
@@ -80,6 +80,8 @@ export default function ProjectDetailPage() {
   const getSubtreeStats = useProjectStore((s) => s.getSubtreeStats);
   const getProjectLevel = useProjectStore((s) => s.getProjectLevel);
   const mergeProject = useProjectStore((s) => s.mergeProject);
+  const undoMerge = useProjectStore((s) => s.undoMerge);
+  const getMerges = useProjectStore((s) => s.getMerges);
 
   const [activeTab, setActiveTab] = useState('overview');
   const [showTaskForm, setShowTaskForm] = useState(false);
@@ -122,6 +124,42 @@ export default function ProjectDetailPage() {
     }
     return () => { cancelled = true; };
   }, [id, project]);
+
+  // T13：当前（目标）项目下可撤销的合并日志（源已并入本项目的合并，24h 内可撤销）
+  const [undoableMerges, setUndoableMerges] = useState([]);
+  const [undoing, setUndoing] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    async function loadUndoable() {
+      try {
+        const logs = await getMerges(id);
+        if (!cancelled) setUndoableMerges(Array.isArray(logs) ? logs : []);
+      } catch (e) {
+        if (!cancelled) setUndoableMerges([]);
+      }
+    }
+    if (project) {
+      setUndoableMerges([]);
+      loadUndoable();
+    } else {
+      setUndoableMerges([]);
+    }
+    return () => { cancelled = true; };
+  }, [id, project, getMerges]);
+
+  const handleUndoMerge = async (mergeId) => {
+    const ok = window.confirm('撤销合并？源项目将恢复独立，被并入本项目的任务/待办/文档/里程碑/风险/资源会重新归属回源项目。');
+    if (!ok) return;
+    setUndoing(true);
+    try {
+      await undoMerge(mergeId);
+      setUndoableMerges([]);
+    } catch (err) {
+      window.alert(`撤销失败：${err.message}`);
+    } finally {
+      setUndoing(false);
+    }
+  };
 
   // 编辑目标（用于打开 Form 时回填数据；null 表示新建）
   const [editingTask, setEditingTask] = useState(null);
@@ -396,6 +434,36 @@ export default function ProjectDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* T13：可撤销合并横幅（本项目的 target，24h 内可一键撤销已并入的源项目） */}
+      {canManageProject(project) && undoableMerges.length > 0 && (
+        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg px-4 py-3 mb-4">
+          <div className="flex items-center gap-2 text-sm font-medium mb-2">
+            <RotateCcw className="w-4 h-4 shrink-0" />
+            <span>已并入本项目的子项目（24h 内可撤销）</span>
+          </div>
+          <ul className="space-y-1.5">
+            {undoableMerges.map((m) => {
+              const src = allProjects.find((p) => p.id === m.sourceId);
+              return (
+                <li key={m.id} className="flex items-center gap-2 text-xs">
+                  <span className="text-emerald-700">
+                    {src ? `${src.name}（${src.code || '无编号'}）` : m.sourceName || m.sourceCode || m.sourceId}
+                    {' '}已被并入本项目
+                  </span>
+                  <button
+                    onClick={() => handleUndoMerge(m.id)}
+                    disabled={undoing}
+                    className="text-primary-600 hover:text-primary-700 font-medium underline underline-offset-2 disabled:opacity-50 disabled:no-underline"
+                  >
+                    撤销
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       {/* Quick Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">

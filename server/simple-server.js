@@ -93,9 +93,10 @@ function loadData() {
         if (!parsed.milestones) parsed.milestones = [];
         if (!parsed.projectTypes) parsed.projectTypes = [];
         if (!parsed.projectStages) parsed.projectStages = [];
+        if (!parsed.projectMerges) parsed.projectMerges = [];
         return parsed;
     } catch (err) {
-        return { projects: [], tasks: [], todos: [], members: [], documents: [], notifications: [], risks: [], resources: [], milestones: [] };
+        return { projects: [], tasks: [], todos: [], members: [], documents: [], notifications: [], risks: [], resources: [], milestones: [], projectMerges: [] };
     }
 }
 
@@ -620,45 +621,54 @@ const server = http.createServer(async (req, res) => {
         };
 
         // 1) 源自身关联实体 projectId → target（task 同时更新 project_id）
-        const repointProjectId = (entity) => {
-            if (entity.projectId === source.id) entity.projectId = target.id;
+        //    记录被移动的实体 ID，供 T13 撤销时精确还原归属
+        const movedEntityIds = { tasks: [], todos: [], documents: [], milestones: [], risks: [], resources: [] };
+        const repointProjectId = (entity, bucket) => {
+            if (entity.projectId === source.id) {
+                entity.projectId = target.id;
+                if (entity.id && movedEntityIds[bucket] && !movedEntityIds[bucket].includes(entity.id)) movedEntityIds[bucket].push(entity.id);
+            }
             if (entity.project_id === source.id) entity.project_id = target.id;
         };
-        data.tasks.forEach(repointProjectId);
-        data.todos.forEach(repointProjectId);
-        data.documents.forEach(repointProjectId);
-        data.milestones.forEach(repointProjectId);
-        data.risks.forEach(repointProjectId);
-        data.resources.forEach(repointProjectId);
+        data.tasks.forEach(t => repointProjectId(t, 'tasks'));
+        data.todos.forEach(t => repointProjectId(t, 'todos'));
+        data.documents.forEach(d => repointProjectId(d, 'documents'));
+        data.milestones.forEach(m => repointProjectId(m, 'milestones'));
+        data.risks.forEach(r => repointProjectId(r, 'risks'));
+        data.resources.forEach(r => repointProjectId(r, 'resources'));
 
         // 2) 子项目改挂（keep：保留层级；flatten：整棵子树拍平到 target）
+        //    同时记录 childOldParentMap：撤销时据此还原每个子项目的原 parentProjectId
         const reparented = new Set();
+        const childOldParentMap = {};
+        const reparentTo = (childId) => {
+            const p = data.projects.find(x => x.id === childId);
+            if (p) {
+                childOldParentMap[childId] = hierarchy.normalizeParent(p.parentProjectId); // null 表示原为根
+                p.parentProjectId = target.id;
+                reparented.add(p.id);
+            }
+        };
         const directChildren = hierarchy.getChildren(data.projects, source.id);
         let flattened = strategy === 'flatten';
         if (strategy === 'flatten') {
             hierarchy.getDescendants(data.projects, source.id).forEach(desc => {
-                const p = data.projects.find(x => x.id === desc.id);
-                if (p) { p.parentProjectId = target.id; reparented.add(p.id); }
+                reparentTo(desc.id);
             });
         } else {
             // keep：直属子项目 parentProjectId → target；若改挂后 level > MAX_DEPTH 则递归拍平整棵子树
             const targetLevel = hierarchy.getLevel(data.projects, target.id);
             const flattenDescendantsOf = (parentId) => {
-                hierarchy.getDescendants(data.projects, parentId).forEach(desc => {
-                    const p = data.projects.find(x => x.id === desc.id);
-                    if (p) { p.parentProjectId = target.id; reparented.add(p.id); }
-                });
+                hierarchy.getDescendants(data.projects, parentId).forEach(desc => reparentTo(desc.id));
             };
             directChildren.forEach(child => {
                 if (targetLevel + 1 > hierarchy.MAX_DEPTH) {
                     // 深度超限：把该子项目整棵子树拍平到 target
                     flattened = true;
-                    const p = data.projects.find(x => x.id === child.id);
-                    if (p) { p.parentProjectId = target.id; reparented.add(p.id); }
+                    reparentTo(child.id);
                     flattenDescendantsOf(child.id);
                 } else {
-                    const p = data.projects.find(x => x.id === child.id);
-                    if (p) { p.parentProjectId = target.id; reparented.add(p.id); }
+                    reparentTo(child.id);
                 }
             });
         }
@@ -668,6 +678,25 @@ const server = http.createServer(async (req, res) => {
         source.mergedAt = new Date().toISOString();
         source.updated_at = new Date().toISOString();
 
+        // 3.5) 写合并日志（供 T13 撤销）：记录被改挂子项目的原始父节点
+        if (!Array.isArray(data.projectMerges)) data.projectMerges = [];
+        const now = new Date().toISOString();
+        const mergeLog = {
+            id: generateId(),
+            sourceId: source.id,
+            targetId: target.id,
+            sourceCode: source.code || '',
+            targetCode: target.code || '',
+            strategy,
+            movedCounts: sourceCounts,
+            childOldParentMap,
+            movedEntityIds,
+            timestamp: now,
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+            undone: false,
+        };
+        data.projectMerges.push(mergeLog);
+
         // 4) 原子写
         saveData(data);
 
@@ -676,6 +705,100 @@ const server = http.createServer(async (req, res) => {
             targetId: target.id,
             movedCounts: sourceCounts,
             flattened,
+            mergeId: mergeLog.id,
+            expiresAt: mergeLog.expiresAt,
+        });
+        return;
+    }
+
+    // ===== 合并日志查询 GET /api/merges?targetId=<tid>&sourceId=<sid>（T13 撤销）=====
+    //    仅返回未撤销且未过期的可撤销项；可按 targetId / sourceId 过滤
+    if (pathname === '/api/merges' && method === 'GET') {
+        const data = loadData();
+        const userId = ac.getUserId(req, url);
+        const targetId = url.searchParams.get('targetId');
+        const sourceId = url.searchParams.get('sourceId');
+        const now = Date.now();
+        let logs = (data.projectMerges || []).filter(m => m && !m.undone && new Date(m.expiresAt).getTime() > now);
+        if (targetId) logs = logs.filter(m => m.targetId === targetId);
+        if (sourceId) logs = logs.filter(m => m.sourceId === sourceId);
+        // 仅返回有权限管理 target 或 source 的日志
+        logs = logs.filter(m => ac.canManageProject(data, userId, m.targetId) || ac.canManageProject(data, userId, m.sourceId));
+        // 附带项目名 / code 便于前端展示
+        const projects = data.projects;
+        const logsOut = logs.map(m => ({
+            ...m,
+            sourceName: projects.find(p => p.id === m.sourceId)?.name || m.sourceCode,
+            targetName: projects.find(p => p.id === m.targetId)?.name || m.targetCode,
+        }));
+        sendResponse(res, 200, logsOut);
+        return;
+    }
+
+    // ===== 撤销合并 POST /api/merges/:id/undo（T13，24h 限时回滚）=====
+    if (pathname.match(/^\/api\/merges\/[\w-]+\/undo$/) && method === 'POST') {
+        const mergeId = pathname.split('/')[3];
+        const data = loadData();
+        const userId = ac.getUserId(req, url);
+        const log = (data.projectMerges || []).find(m => m.id === mergeId);
+        if (!log) { sendResponse(res, 404, { success: false, error: '合并日志不存在' }); return; }
+        if (log.undone) { sendResponse(res, 409, { success: false, error: '该合并已被撤销' }); return; }
+        if (new Date(log.expiresAt).getTime() <= Date.now()) {
+            sendResponse(res, 409, { success: false, error: '撤销窗口（24h）已过期，无法撤销' }); return;
+        }
+        const source = data.projects.find(p => p.id === log.sourceId);
+        const target = data.projects.find(p => p.id === log.targetId);
+        if (!source || !target) { sendResponse(res, 409, { success: false, error: '源或目标项目已不存在' }); return; }
+        if (!ac.canManageProject(data, userId, log.targetId) && !ac.canManageProject(data, userId, log.sourceId)) {
+            sendResponse(res, 403, { success: false, error: '无权撤销该合并' }); return;
+        }
+
+        // 1) 还原被移动实体的归属（仅限日志记录的 movedEntityIds，避免误伤合并后新增的实体）
+        const setBucket = (list, bucket) => {
+            const ids = (log.movedEntityIds && log.movedEntityIds[bucket]) || [];
+            if (!ids.length) return;
+            list.forEach(e => {
+                if (ids.includes(e.id)) {
+                    e.projectId = log.sourceId;
+                    if (e.project_id !== undefined) e.project_id = log.sourceId;
+                }
+            });
+        };
+        setBucket(data.tasks, 'tasks');
+        setBucket(data.todos, 'todos');
+        setBucket(data.documents, 'documents');
+        setBucket(data.milestones, 'milestones');
+        setBucket(data.risks, 'risks');
+        setBucket(data.resources, 'resources');
+
+        // 2) 还原子项目的 parentProjectId
+        const oldParentMap = log.childOldParentMap || {};
+        Object.keys(oldParentMap).forEach(childId => {
+            const p = data.projects.find(x => x.id === childId);
+            if (p) {
+                const oldParent = oldParentMap[childId];
+                if (oldParent === null) delete p.parentProjectId;
+                else p.parentProjectId = oldParent;
+            }
+        });
+
+        // 3) 清空源项目的合并标记
+        delete source.mergedInto;
+        delete source.mergedAt;
+        source.updated_at = new Date().toISOString();
+
+        // 4) 标记日志已撤销
+        log.undone = true;
+        log.undoneAt = new Date().toISOString();
+
+        // 5) 原子写
+        saveData(data);
+        sendResponse(res, 200, {
+            success: true,
+            mergeId: log.id,
+            sourceId: log.sourceId,
+            targetId: log.targetId,
+            restoredCounts: log.movedCounts,
         });
         return;
     }

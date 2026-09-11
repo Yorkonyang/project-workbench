@@ -118,6 +118,22 @@ class ApiClient {
         });
     }
 
+    // 项目合并 - 撤销日志查询（可按 targetId/sourceId 过滤，返回未撤销且未过期的可撤销项）
+    async getMerges({ targetId, sourceId } = {}) {
+        const params = new URLSearchParams();
+        if (targetId) params.set('targetId', targetId);
+        if (sourceId) params.set('sourceId', sourceId);
+        const qs = params.toString();
+        return this.request(`/merges${qs ? `?${qs}` : ''}`);
+    }
+
+    // 项目合并 - 撤销（24h 限时回滚）
+    async undoMerge(mergeId) {
+        return this.request(`/merges/${mergeId}/undo`, {
+            method: 'POST',
+        });
+    }
+
     // 子树查询（含全部子孙）
     async getProjectSubtree(id) {
         return this.request(`/projects/${id}/subtree`);
