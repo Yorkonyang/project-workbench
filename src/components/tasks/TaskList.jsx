@@ -6,6 +6,7 @@ import { useProjectStore } from '@/store/useProjectStore';
 import { useOrgStore } from '@/store/useOrgStore';
 import { AVATAR_COLORS } from '@/config/theme';
 import { useAccess } from '@/hooks/useAccess';
+import ProjectBreadcrumb from '@/components/projects/ProjectBreadcrumb';
 import {
   getPriorityConfig,
   getTaskStatusConfig,
@@ -44,6 +45,7 @@ export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress
           <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
             <th className="py-2 px-3 font-medium">任务标题</th>
             <th className="py-2 px-3 font-medium">项目</th>
+            <th className="py-2 px-3 font-medium hidden lg:table-cell">层级</th>
             <th className="py-2 px-3 font-medium hidden md:table-cell">负责人</th>
             <th className="py-2 px-3 font-medium">优先级</th>
             <th className="py-2 px-3 font-medium">状态</th>

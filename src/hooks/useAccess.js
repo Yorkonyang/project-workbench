@@ -11,6 +11,7 @@ import { useMemberStore } from '@/store/useMemberStore';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useTodoStore } from '@/store/useTodoStore';
+import { collectSubtree } from '@/lib/hierarchy';
 
 export function useAccess() {
     const currentUserId = useAuthStore((s) => s.currentUserId);
@@ -163,6 +164,25 @@ export function useAccess() {
         return canManageProject(projectById(ms.projectId));
     };
 
+    // 合并项目权限：可管理者 + 未归档 + 未合并（与后端 accessControl.canMergeProject 语义一致）
+    const canMergeProject = (project) => {
+        if (!project) return false;
+        if (project.archived) return false;
+        if (project.mergedInto) return false;
+        return canManageProject(project);
+    };
+
+    // 可见项目集合（含可见项目的全部子孙，遵循可见性继承：能看父即能看子）
+    const visibleProjectIds = (() => {
+        const ids = new Set();
+        (projects || []).forEach((p) => {
+            if (!p.mergedInto && canViewProject(p)) {
+                collectSubtree(projects, p.id).forEach((id) => ids.add(id));
+            }
+        });
+        return ids;
+    })();
+
     return {
         currentUserId,
         me,
@@ -170,7 +190,9 @@ export function useAccess() {
         isAdmin,
         isProjectOwner,
         canManageProject,
+        canMergeProject,
         canViewProject,
+        visibleProjectIds,
         canViewProjectTasks,
         canManageTask,
         canReportTask,

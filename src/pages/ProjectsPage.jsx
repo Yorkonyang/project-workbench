@@ -12,6 +12,7 @@ import { useMemberStore } from '@/store/useMemberStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useTodoStore } from '@/store/useTodoStore';
+import { getChildren, collectSubtree, getProjectLevel, MAX_DEPTH } from '@/lib/hierarchy';
 import { cn, isOverdue, dueDateLabel, getProjectStatusConfig, formatDate } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
 import TaskProgressModal from '@/components/tasks/TaskProgressModal';
@@ -34,6 +35,7 @@ export default function ProjectsPage() {
   const navigate = useNavigate();
   const [showForm, setShowForm] = useState(false);
   const [editingProject, setEditingProject] = useState(null);
+  const [subParentId, setSubParentId] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [showPending, setShowPending] = useState(false);
   const [queryProjectId, setQueryProjectId] = useState('');
@@ -99,35 +101,237 @@ export default function ProjectsPage() {
   // canManageTodo：仅 todo 的 owner/assignee 才能勾选/取消
   const { canManageProject, canReportTask, canManageTodo } = useAccess();
 
-  const activeProjects = projects.filter((p) => !p.archived);
-  const archivedProjects = projects.filter((p) => p.archived);
-  const pendingArchiveProjects = projects.filter((p) => p.archiveStatus === 'requested');
+  // 已合并项目软隐藏（mergedInto 非空），不出现在任何列表
+  const activeProjects = projects.filter((p) => !p.archived && !p.mergedInto);
+  const archivedProjects = projects.filter((p) => p.archived && !p.mergedInto);
+  const pendingArchiveProjects = projects.filter((p) => p.archiveStatus === 'requested' && !p.mergedInto);
 
   // 下拉查询：仅列出「进行中」项目
   const inProgressProjects = projects.filter((p) => !p.archived && p.status === 'in_progress');
 
-  // 选中项目后，连同其全部下级隶属项目（递归）一起展示
-  const collectSubtree = (rootId) => {
-    const ids = new Set([rootId]);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      projects.forEach((p) => {
-        if (p.parentProjectId && ids.has(p.parentProjectId) && !ids.has(p.id)) {
-          ids.add(p.id);
-          changed = true;
-        }
-      });
-    }
-    return ids;
-  };
-  const subtreeIds = queryProjectId ? collectSubtree(queryProjectId) : null;
+  // 选中项目后，连同其全部下级隶属项目（递归）一起展示（复用层级工具）
+  const subtreeIds = queryProjectId ? collectSubtree(projects, queryProjectId) : null;
 
   const filteredActive = subtreeIds
     ? activeProjects.filter((p) => subtreeIds.has(p.id))
     : activeProjects;
 
   const filteredArchived = archivedProjects;
+
+  // 递归渲染单个项目节点（主→子→任务→待办 四级树）
+  const renderProjectNode = (project, level = 0) => {
+    const projectTasks = tasksByProject[project.id] || [];
+    const childProjects = getChildren(projects, project.id);
+    const isProjectExpanded = expandedProjects[project.id] !== false; // 默认展开
+    const taskTotal = projectTasks.length;
+    const taskDone = projectTasks.filter((t) => t.status === 'done').length;
+    const progress = taskTotal > 0 ? Math.round((taskDone / taskTotal) * 100) : 0;
+    const canAddSub = canManageProject(project) && level < MAX_DEPTH;
+    const atMaxDepth = level >= MAX_DEPTH;
+
+    return (
+      <div key={project.id} className={cn('bg-white rounded-xl border border-slate-200 overflow-hidden', level > 0 && 'mt-2')}>
+        {/* ── 项目行（含缩进 + 连接线 + 层级徽标）── */}
+        <div
+          className="flex items-center gap-2.5 px-4 py-3"
+          style={{ paddingLeft: level > 0 ? 16 + level * 16 : undefined }}
+        >
+          {level > 0 && <span className="absolute" style={{ left: level * 16 - 4 }} />}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpandedProjects((prev) => ({ ...prev, [project.id]: !isProjectExpanded }));
+            }}
+            className="text-slate-400 hover:text-slate-600 shrink-0 p-0.5 rounded hover:bg-slate-200 transition-smooth"
+            title={isProjectExpanded ? '收起' : '展开'}
+          >
+            {isProjectExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          </button>
+
+          {/* 层级徽标 */}
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0">L{level}</span>
+
+          <button
+            onClick={() => {
+              if (!canManageProject(project)) {
+                navigate(`/projects/${project.id}`);
+                return;
+              }
+              setTaskFormProjectId(project.id);
+              setShowTaskForm(true);
+            }}
+            className={cn(
+              'flex items-center gap-2.5 flex-1 min-w-0 text-left rounded-lg px-1 py-0.5 transition-smooth',
+              canManageProject(project) ? 'group hover:bg-slate-50 cursor-pointer' : 'group-hover:text-slate-700'
+            )}
+            title={canManageProject(project) ? '点击为该项目新建任务' : '点击进入项目详情（成员无权在此新建任务）'}
+          >
+            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: project.color }} />
+            <span className="text-xs text-slate-400 font-mono shrink-0">{project.code}</span>
+            <span className="font-medium text-slate-800 flex-1 truncate group-hover:text-primary-600">{project.name}</span>
+            <StatusBadge status={project.status} />
+            {taskTotal > 0 && <span className="text-xs text-slate-400 whitespace-nowrap">{taskDone}/{taskTotal} 任务</span>}
+          </button>
+
+          {project.ownerId && (
+            <span className="text-xs text-slate-500 whitespace-nowrap flex items-center gap-1">
+              <User className="w-3 h-3" />
+              {members.find((m) => m.id === project.ownerId)?.name || project.ownerId}
+            </span>
+          )}
+          {(project.startDate || project.endDate) && (
+            <span className="text-xs text-slate-500 whitespace-nowrap flex items-center gap-1">
+              <Calendar className="w-3 h-3" />
+              {formatDate(project.startDate)} ~ {formatDate(project.endDate)}
+            </span>
+          )}
+          {taskTotal > 0 && (
+            <span className="text-xs text-slate-600 font-medium whitespace-nowrap">总体进度：{progress}%</span>
+          )}
+
+          {/* 新建子项目入口（负责人/admin，且未达最大层级） */}
+          {canAddSub && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditingProject(null);
+                setSubParentId(project.id);
+                setShowForm(true);
+              }}
+              className="p-1.5 hover:bg-primary-100 rounded text-slate-400 hover:text-primary-600 shrink-0"
+              title="新建子项目"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {atMaxDepth && canManageProject(project) && (
+            <span className="text-[10px] text-amber-500 shrink-0" title="已达最大层级，无法再建子项目">已达上限</span>
+          )}
+
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/projects/${project.id}`);
+            }}
+            className="p-1.5 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-600 shrink-0"
+            title="进入项目详情"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+          </button>
+          {canManageProject(project) && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); directArchive(project.id); }}
+                className="p-1.5 hover:bg-amber-100 rounded text-slate-400 hover:text-amber-600 shrink-0"
+                title="归档项目"
+              >
+                <Archive className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setPendingDeleteProject(project); }}
+                className="p-1.5 hover:bg-red-100 rounded text-slate-400 hover:text-red-600 shrink-0"
+                title="删除项目"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* ── 展开区：子项目 + 直属任务 ── */}
+        {isProjectExpanded && (
+          <div className={cn('border-t border-slate-100', level > 0 && 'border-l-2 border-slate-200')}>
+            {/* 子项目分组 */}
+            {childProjects.length > 0 && (
+              <div className="px-4 py-2 bg-slate-50/60">
+                <div className="text-xs font-medium text-slate-500 mb-2">子项目 {childProjects.length} 个</div>
+                <div className="space-y-2">
+                  {childProjects.map((child) => renderProjectNode(child, level + 1))}
+                </div>
+              </div>
+            )}
+            {/* 直属任务分组 */}
+            <div className="px-4 py-2">
+              <div className="text-xs font-medium text-slate-500 mb-2">直属任务 {projectTasks.length} 个</div>
+              {projectTasks.length === 0 ? (
+                <div className="pl-12 text-xs text-slate-400">暂无任务</div>
+              ) : (
+                projectTasks.map((task) => {
+                  const taskTodos = todosByTask[task.id] || [];
+                  const isTaskExpanded = !!expandedTasks[task.id];
+                  const todoDone = taskTodos.filter((t) => t.done).length;
+                  return (
+                    <div key={task.id}>
+                      <div className="flex items-stretch border-b border-slate-50 last:border-b-0">
+                        <div
+                          className="flex items-center pl-12 pr-1 cursor-pointer hover:bg-slate-50 transition-smooth shrink-0"
+                          onClick={() => setExpandedTasks((prev) => ({ ...prev, [task.id]: !isTaskExpanded }))}
+                        >
+                          <button className="text-slate-400 hover:text-slate-600">
+                            {isTaskExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                          </button>
+                        </div>
+                        <div
+                          className={cn(
+                            'flex items-center gap-2.5 px-2 py-2.5 flex-1 min-w-0 transition-smooth',
+                            canReportTask(task) ? 'cursor-pointer hover:bg-slate-50' : 'cursor-default text-slate-400'
+                          )}
+                          onClick={() => { if (!canReportTask(task)) return; setEditingTask(task); }}
+                          title={canReportTask(task) ? '点击查看/汇报进度' : '您没有参与该任务，无权查看详情'}
+                        >
+                          <span className="text-sm text-slate-700 flex-1 truncate" style={{ fontFamily: 'SimHei, "Microsoft YaHei", sans-serif' }}>{task.title}</span>
+                          <StatusBadge status={task.status} kind="task" />
+                          {task.assignedTo && <span className="text-xs text-slate-400 truncate max-w-[100px]">{task.assignedTo}</span>}
+                          {taskTodos.length > 0 && <span className="text-xs text-slate-400 whitespace-nowrap">{todoDone}/{taskTodos.length} 待办</span>}
+                        </div>
+                      </div>
+                      {isTaskExpanded && taskTodos.length > 0 && (
+                        <div className="bg-slate-50">
+                          {taskTodos.map((todo) => {
+                            const overdue = todo.dueDate && !todo.completed && isOverdue(todo.dueDate);
+                            return (
+                              <div key={todo.id} className="flex items-center gap-2.5 px-4 py-2 pl-20 border-b border-slate-100 last:border-b-0">
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); if (canManageTodo(todo)) toggleTodo(todo.id); }}
+                                  disabled={!canManageTodo(todo)}
+                                  aria-checked={todo.completed ? 'true' : 'false'}
+                                  role="checkbox"
+                                  className={cn(
+                                    'relative w-5 h-5 rounded-full border-2 shrink-0 transition-colors select-none',
+                                    todo.completed
+                                      ? 'bg-green-500 border-green-500'
+                                      : canManageTodo(todo) ? 'border-slate-300 hover:border-primary-500' : 'border-slate-200 opacity-50 cursor-not-allowed'
+                                  )}
+                                >
+                                  {todo.completed && (
+                                    <svg viewBox="0 0 20 20" className="absolute inset-0 m-auto w-3 h-3 pointer-events-none" aria-hidden="true">
+                                      <polyline points="5 10.5 9 14.5 15.5 7" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  )}
+                                </button>
+                                <span className={cn('text-sm flex-1 truncate', todo.completed ? 'text-slate-400 line-through' : 'text-slate-600')}>{todo.title}</span>
+                                {todo.dueDate && (
+                                  <span className={cn('text-xs whitespace-nowrap', overdue ? 'text-red-500 font-medium' : 'text-slate-400')}>{dueDateLabel(todo.dueDate)}</span>
+                                )}
+                                <span className={cn('text-xs px-1.5 py-0.5 rounded whitespace-nowrap', todo.completed ? 'text-green-600 bg-green-50' : 'text-amber-600 bg-amber-50')}>
+                                  {todo.completed ? '已完成' : '待办'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const handleSave = (data) => {
     if (editingProject) {
@@ -137,6 +341,7 @@ export default function ProjectsPage() {
     }
     setShowForm(false);
     setEditingProject(null);
+    setSubParentId('');
   };
 
   const handleEdit = (project) => {
@@ -329,6 +534,7 @@ export default function ProjectsPage() {
               onApprove={() => handleApprove(project)}
               onReject={() => handleReject(project)}
               onCardClick={() => handleCardClick(project.id)}
+              onAddSubProject={handleAddSubProject}
               onDelete={handleDelete}
             />
           ))}
@@ -350,274 +556,11 @@ export default function ProjectsPage() {
           ))}
         </div>
       ) : (
-        /* 活跃项目 — 三级层级视图 */
+        /* 活跃项目 — 主→子→任务→待办 四级树 */
         <div className="space-y-2">
-          {filteredActive.map((project) => {
-            const projectTasks = tasksByProject[project.id] || [];
-            const isProjectExpanded = expandedProjects[project.id] !== false; // 默认展开
-            const taskTotal = projectTasks.length;
-            const taskDone = projectTasks.filter((t) => t.status === 'done').length;
-            // 计算项目总体进度（基于任务完成率）
-            const progress = taskTotal > 0 ? Math.round((taskDone / taskTotal) * 100) : 0;
-            // 获取项目负责人
-            const owner = members.find((m) => m.id === project.ownerId);
-            const ownerName = owner?.name || project.ownerId || '未设置';
-
-            return (
-              <div key={project.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                {/* ── 第一层：项目行 ── */}
-                <div className="flex items-center gap-2.5 px-4 py-3">
-                  {/* 左端展开/折叠按钮：只控制任务列表显隐 */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setExpandedProjects((prev) => ({ ...prev, [project.id]: !isProjectExpanded }));
-                    }}
-                    className="text-slate-400 hover:text-slate-600 shrink-0 p-0.5 rounded hover:bg-slate-200 transition-smooth"
-                    title={isProjectExpanded ? '收起任务' : '展开任务'}
-                  >
-                    {isProjectExpanded ? (
-                      <ChevronDown className="w-4 h-4" />
-                    ) : (
-                      <ChevronRight className="w-4 h-4" />
-                    )}
-                  </button>
-                  {/* 项目圆点 + 标题区域：项目负责人点击打开新建任务弹窗；成员点击进入项目详情（无权新建任务） */}
-                  <button
-                    onClick={() => {
-                      // 权限矩阵：被分配任务的成员不能在没有负责的项目中新建任务
-                      // - 负责人/admin：点击弹新建任务（绑该项目）
-                      // - 成员：跳项目详情页（不做"新建任务"入口）
-                      if (!canManageProject(project)) {
-                        navigate(`/projects/${project.id}`);
-                        return;
-                      }
-                      setTaskFormProjectId(project.id);
-                      setShowTaskForm(true);
-                    }}
-                    className={cn(
-                      "flex items-center gap-2.5 flex-1 min-w-0 text-left rounded-lg px-1 py-0.5 transition-smooth",
-                      canManageProject(project)
-                        ? "group hover:bg-slate-50 cursor-pointer"
-                        : "group-hover:text-slate-700"
-                    )}
-                    title={canManageProject(project) ? '点击为该项目新建任务' : '点击进入项目详情（成员无权在此新建任务）'}
-                  >
-                    <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: project.color }}
-                    />
-                    <span className="text-xs text-slate-400 font-mono shrink-0">{project.code}</span>
-                    <span className="font-medium text-slate-800 flex-1 truncate group-hover:text-primary-600">
-                      {project.name}
-                    </span>
-                    <StatusBadge status={project.status} />
-                    {taskTotal > 0 && (
-                      <span className="text-xs text-slate-400 whitespace-nowrap">
-                        {taskDone}/{taskTotal} 任务
-                      </span>
-                    )}
-                  </button>
-                  {/* 新增：项目负责人信息 */}
-                  {project.ownerId && (
-                    <span className="text-xs text-slate-500 whitespace-nowrap flex items-center gap-1">
-                      <User className="w-3 h-3" />
-                      {members.find(m => m.id === project.ownerId)?.name || project.ownerId}
-                    </span>
-                  )}
-                  {/* 新增：日期范围信息（开始时间 ~ 结束时间） */}
-                  {(project.startDate || project.endDate) && (
-                    <span className="text-xs text-slate-500 whitespace-nowrap flex items-center gap-1">
-                      <Calendar className="w-3 h-3" />
-                      {formatDate(project.startDate)} ~ {formatDate(project.endDate)}
-                    </span>
-                  )}
-                  {/* 新增：总体进度信息 */}
-                  {taskTotal > 0 && (
-                    <span className="text-xs text-slate-600 font-medium whitespace-nowrap">
-                      总体进度：{Math.round((taskDone / taskTotal) * 100)}%
-                    </span>
-                  )}
-                  {/* 最右端：进入项目详情 */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/projects/${project.id}`);
-                    }}
-                    className="p-1.5 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-600 shrink-0"
-                    title="进入项目详情"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </button>
-                  {/* 归档 / 删除：仅项目负责人可见（普通成员不显示） */}
-                  {canManageProject(project) && (
-                    <>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          directArchive(project.id);
-                        }}
-                        className="p-1.5 hover:bg-amber-100 rounded text-slate-400 hover:text-amber-600 shrink-0"
-                        title="归档项目（完成后清理列表）"
-                      >
-                        <Archive className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPendingDeleteProject(project);
-                        }}
-                        className="p-1.5 hover:bg-red-100 rounded text-slate-400 hover:text-red-600 shrink-0"
-                        title="删除项目"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                {/* ── 第二层：任务列表 ── */}
-                {isProjectExpanded && (
-                  <div className="border-t border-slate-100">
-                    {projectTasks.length === 0 ? (
-                      <div className="px-4 py-3 pl-12 text-xs text-slate-400">暂无任务</div>
-                    ) : (
-                      projectTasks.map((task) => {
-                        const taskTodos = todosByTask[task.id] || [];
-                        const isTaskExpanded = !!expandedTasks[task.id]; // 默认收起
-                        const todoDone = taskTodos.filter((t) => t.done).length;
-
-                        return (
-                          <div key={task.id}>
-                            {/* 任务行：点击箭头展开/折叠待办，点击主体弹出进度汇报 */}
-                            <div className="flex items-stretch border-b border-slate-50 last:border-b-0">
-                              {/* 展开/折叠箭头 */}
-                              <div
-                                className="flex items-center pl-12 pr-1 cursor-pointer hover:bg-slate-50 transition-smooth shrink-0"
-                                onClick={() =>
-                                  setExpandedTasks((prev) => ({
-                                    ...prev,
-                                    [task.id]: !isTaskExpanded,
-                                  }))
-                                }
-                              >
-                                <button className="text-slate-400 hover:text-slate-600">
-                                  {isTaskExpanded ? (
-                                    <ChevronDown className="w-3 h-3" />
-                                  ) : (
-                                    <ChevronRight className="w-3 h-3" />
-                                  )}
-                                </button>
-                              </div>
-                              {/* 任务主体：仅任务负责人（assignee）才能点击弹出进度汇报；其他人不可打开（权限矩阵） */}
-                              <div
-                                className={cn(
-                                  "flex items-center gap-2.5 px-2 py-2.5 flex-1 min-w-0 transition-smooth",
-                                  canReportTask(task) ? 'cursor-pointer hover:bg-slate-50' : 'cursor-default text-slate-400'
-                                )}
-                                onClick={() => {
-                                  if (!canReportTask(task)) return; // 非任务责任人不可打开
-                                  setEditingTask(task);
-                                }}
-                                title={canReportTask(task) ? '点击查看/汇报进度' : '您没有参与该任务，无权查看详情'}
-                              >
-                                <span className="text-sm text-slate-700 flex-1 truncate" style={{ fontFamily: 'SimHei, "Microsoft YaHei", sans-serif' }}>
-                                  {task.title}
-                                </span>
-                                <StatusBadge status={task.status} kind="task" />
-                                {task.assignedTo && (
-                                  <span className="text-xs text-slate-400 truncate max-w-[100px]">
-                                    {task.assignedTo}
-                                  </span>
-                                )}
-                                {taskTodos.length > 0 && (
-                                  <span className="text-xs text-slate-400 whitespace-nowrap">
-                                    {todoDone}/{taskTodos.length} 待办
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* ── 第三层：待办列表 ── */}
-                            {isTaskExpanded && taskTodos.length > 0 && (
-                              <div className="bg-slate-50">
-                                {taskTodos.map((todo) => {
-                                  const overdue = todo.dueDate && !todo.completed && isOverdue(todo.dueDate);
-                                  return (
-                                    <div
-                                      key={todo.id}
-                                      className="flex items-center gap-2.5 px-4 py-2 pl-20 border-b border-slate-100 last:border-b-0"
-                                    >
-                                      {/* 圆形 checkbox：未完成时空心 ⭕️，完成后绿色圆带白勾
-                                          注意：内部只能渲染勾选图标，禁止塞入任何文本，避免渲染 0 等异常字符 */}
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          // 仅项目的 owner/admin 或 自己创建/被分配的待办 可切换状态
-                                          if (canManageTodo(todo)) toggleTodo(todo.id);
-                                        }}
-                                        disabled={!canManageTodo(todo)}
-                                        aria-checked={todo.completed ? 'true' : 'false'}
-                                        role="checkbox"
-                                        className={cn(
-                                          "relative w-5 h-5 rounded-full border-2 shrink-0 transition-colors select-none",
-                                          todo.completed
-                                            ? 'bg-green-500 border-green-500'
-                                            : canManageTodo(todo)
-                                              ? 'border-slate-300 hover:border-primary-500'
-                                              : 'border-slate-200 opacity-50 cursor-not-allowed'
-                                        )}
-                                      >
-                                        {todo.completed ? (
-                                          <svg viewBox="0 0 20 20" className="absolute inset-0 m-auto w-3 h-3 pointer-events-none" aria-hidden="true">
-                                            <polyline points="5 10.5 9 14.5 15.5 7" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                                          </svg>
-                                        ) : null}
-                                      </button>
-                                      <span
-                                        className={`text-sm flex-1 truncate ${
-                                          todo.completed
-                                            ? 'text-slate-400 line-through'
-                                            : 'text-slate-600'
-                                        }`}
-                                      >
-                                        {todo.title}
-                                      </span>
-                                      {todo.dueDate && (
-                                        <span
-                                          className={`text-xs whitespace-nowrap ${
-                                            overdue
-                                              ? 'text-red-500 font-medium'
-                                              : 'text-slate-400'
-                                          }`}
-                                        >
-                                          {dueDateLabel(todo.dueDate)}
-                                        </span>
-                                      )}
-                                      <span
-                                        className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${
-                                          todo.completed
-                                            ? 'text-green-600 bg-green-50'
-                                            : 'text-amber-600 bg-amber-50'
-                                        }`}
-                                      >
-                                        {todo.completed ? '已完成' : '待办'}
-                                      </span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {filteredActive
+            .filter((p) => !p.parentProjectId)
+            .map((project) => renderProjectNode(project, 0))}
         </div>
       )}
 
@@ -652,6 +595,8 @@ export default function ProjectsPage() {
       {showForm && (
         <ProjectForm
           project={editingProject}
+          parentProjectId={subParentId}
+          isSubProject={!!subParentId && !editingProject}
           onClose={handleCloseForm}
           onSave={handleSave}
         />

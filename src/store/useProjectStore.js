@@ -4,6 +4,13 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { apiClient } from '@/lib/apiClient';
+import * as hierarchy from '@/lib/hierarchy';
+import { useTaskStore } from '@/store/useTaskStore';
+import { useTodoStore } from '@/store/useTodoStore';
+import { useDocumentStore } from '@/store/useDocumentStore';
+import { useMilestoneStore } from '@/store/useMilestoneStore';
+import { useRiskStore } from '@/store/useRiskStore';
+import { useResourceStore } from '@/store/useResourceStore';
 
 export const useProjectStore = create(
   persist(
@@ -59,8 +66,8 @@ export const useProjectStore = create(
         }));
       },
 
-      getActiveProjects: () => get().projects.filter((p) => !p.archived),
-      getArchivedProjects: () => get().projects.filter((p) => p.archived),
+      getActiveProjects: () => get().projects.filter((p) => !p.archived && !p.mergedInto),
+      getArchivedProjects: () => get().projects.filter((p) => p.archived && !p.mergedInto),
       getRequestedProjects: () => get().projects.filter((p) => p.archiveStatus === 'requested'),
 
       // 提交归档申请（ProjectCard 调用此方法）
@@ -117,6 +124,68 @@ export const useProjectStore = create(
           }));
           return result;
         }
+      },
+
+      // ===== 项目合并（预览 + 执行）=====
+      previewMerge: async (sourceId, targetId) => {
+        return apiClient.previewMerge(sourceId, targetId);
+      },
+
+      // 执行合并：调后端原子合并，成功后刷新项目与各实体 store（任务/待办/文档/里程碑/风险/资源）
+      // 合并是后端单次 saveData，前端无需逐 store 批量改 projectId
+      mergeProject: async (sourceId, targetId, strategy = 'keep') => {
+        const result = await apiClient.mergeProject(sourceId, targetId, strategy);
+        // 刷新全部相关缓存，确保已合并源隐藏、实体归属指向目标
+        await get().fetchProjects();
+        await useTaskStore.getState().fetchTasks();
+        await useTodoStore.getState().fetchTodos();
+        await useDocumentStore.getState().fetchDocuments();
+        await useMilestoneStore.getState().fetchMilestones();
+        await useRiskStore.getState().fetchRisks();
+        await useResourceStore.getState().fetchResources();
+        return result;
+      },
+
+      // ===== 层级辅助方法（统一委托 hierarchy，避免双真源）=====
+      getProjectLevel: (id) => hierarchy.getLevel(get().projects, id),
+      getChildren: (id) => hierarchy.getChildren(get().projects, id),
+      getDescendants: (id) => hierarchy.getDescendants(get().projects, id),
+      getAncestors: (id) => hierarchy.getAncestors(get().projects, id),
+
+      // 合并候选：排除自身/子孙/已归档/已合并
+      getMergeCandidates: (id) => {
+        const projects = get().projects;
+        const subtree = hierarchy.collectSubtree(projects, id);
+        return projects.filter(
+          (p) => !subtree.has(p.id) && !p.archived && !p.mergedInto
+        );
+      },
+
+      // 子树聚合统计：按“自身 + 全部子孙的任务完成率”计算进度（不写回 project.progress）
+      getSubtreeStats: (id) => {
+        const projects = get().projects;
+        const tasks = useTaskStore.getState().tasks;
+        const project = projects.find((p) => p.id === id);
+        if (!project) {
+          return { taskTotal: 0, taskDone: 0, progress: 0, incompleteItems: 0, childProjectCount: 0, isLeaf: true, level: 0, code: '', name: '' };
+        }
+        const subtree = hierarchy.collectSubtree(projects, id);
+        const subtreeTasks = (tasks || []).filter((t) => subtree.has(t.projectId || t.project_id));
+        const taskTotal = subtreeTasks.length;
+        const taskDone = subtreeTasks.filter((t) => t.status === 'done').length;
+        const progress = taskTotal ? Math.round((taskDone / taskTotal) * 100) : 0;
+        const childProjectCount = hierarchy.getChildren(projects, id).length;
+        return {
+          taskTotal,
+          taskDone,
+          progress,
+          incompleteItems: taskTotal - taskDone,
+          childProjectCount,
+          isLeaf: childProjectCount === 0,
+          level: hierarchy.getLevel(projects, id),
+          code: project.code,
+          name: project.name,
+        };
       },
     }),
     {

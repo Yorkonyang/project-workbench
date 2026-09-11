@@ -79,10 +79,12 @@ function taskVisibleProjectIds(data, userId) {
 
 function visibleProjects(data, userId) {
     if (!userId) return [];
+    // 权限层：只回答"哪些项目此用户可见"，不过滤合并/归档状态（数据层过滤放路由）
+    // 已合并的源项目：其 owner/admin 仍可见（合并未变更 owner）
     if (isAdmin(data, userId)) return data.projects || [];
     const myId = String(userId);
     const myName = getUserName(data, userId);
-    return (data.projects || []).filter((p) => {
+    const visible = (data.projects || []).filter((p) => {
         // 1. 项目所有者（ownerId 创建者 或 manager 指定负责人）
         if (p.ownerId === myId || p.manager === myId) return true;
         // 2. 项目成员：该项目下存在「自己作为 assignee 的任务」或「自己作为 assignee 的待办」
@@ -102,6 +104,23 @@ function visibleProjects(data, userId) {
         if (mineTodoInProject) return true;
         return false;
     });
+    // 3. 子项目可见性继承：能看父项目即能看其全部子孙（即便子项目下该用户无任务）
+    const visibleIds = new Set(visible.map((p) => p.id));
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const p of (data.projects || [])) {
+            if (visibleIds.has(p.id)) continue;
+            const parentId = p.parentProjectId;
+            if (!parentId || parentId === '__root__') continue;
+            if (visibleIds.has(parentId)) {
+                visibleIds.add(p.id);
+                visible.push(p);
+                changed = true;
+            }
+        }
+    }
+    return visible;
 }
 
 function visibleTasks(data, userId) {
@@ -235,12 +254,23 @@ function canViewProject(data, userId, projectId) {
     return mine;
 }
 
+// 能否合并某项目：所有者/admin 可管理、未归档、且未已合并
+function canMergeProject(data, userId, projectId) {
+    if (!canManageProject(data, userId, projectId)) return false;
+    const p = (data.projects || []).find((x) => x.id === projectId);
+    if (!p) return false;
+    if (p.archived === 1) return false;
+    if (p.mergedInto) return false;
+    return true;
+}
+
 module.exports = {
     getUserId,
     getUserRole,
     isAdmin,
     isProjectOwner,
     canManageProject,
+    canMergeProject,
     canManageTask,
     canCreateTask,
     canCreateTodo,

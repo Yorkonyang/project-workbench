@@ -27,8 +27,9 @@ const STATUSES = [
   { value: 'completed', label: '已完成' },
 ];
 
-export default function ProjectForm({ project, onClose, onSave }) {
+export default function ProjectForm({ project, onClose, onSave, parentProjectId = '', isSubProject = false }) {
   const generateProjectCode = useProjectStore((s) => s.generateProjectCode);
+  const getProjectLevel = useProjectStore((s) => s.getProjectLevel);
   const members = useMemberStore((s) => s.members);
   const allProjects = useProjectStore((s) => s.projects);
   const projectTypes = useDictionaryStore((s) => s.projectTypes);
@@ -38,17 +39,32 @@ export default function ProjectForm({ project, onClose, onSave }) {
   const initialTypeId = project?.projectTypeId || project?.project_type_id || '';
   const [typeId, setTypeId] = useState(initialTypeId);
 
-  const [formData, setFormData] = useState({
-    code: project?.code || generateProjectCode(),
-    name: '',
-    description: '',
-    startDate: '',
-    endDate: '',
-    status: project?.status === 'active' ? 'in_progress' : (project?.status || 'planned'),
-    parentProjectId: '',
-    color: COLORS[0].value,
-    manager: '',
-    ...project,
+  // 新建子项目时，预置 parentProjectId；其余情况沿用已有（或空=根项目）
+  const [formData, setFormData] = useState(() => {
+    const base = {
+      code: project?.code || generateProjectCode(),
+      name: '',
+      description: '',
+      startDate: '',
+      endDate: '',
+      status: project?.status === 'active' ? 'in_progress' : (project?.status || 'planned'),
+      parentProjectId: project?.parentProjectId || '',
+      color: COLORS[0].value,
+      manager: '',
+      ...project,
+    };
+    if (isSubProject && parentProjectId) {
+      const parent = allProjects.find((p) => p.id === parentProjectId);
+      if (parent) {
+        base.parentProjectId = parent.id;
+        // 子项目继承父项目的负责人、颜色、起止区间（P0 仍用全局顺序编号，不采用层级编号）
+        base.manager = parent.manager || '';
+        base.color = parent.color || COLORS[0].value;
+        if (parent.startDate) base.startDate = parent.startDate;
+        if (parent.endDate) base.endDate = parent.endDate;
+      }
+    }
+    return base;
   });
 
   const handleTypeChange = (e) => {
@@ -66,13 +82,14 @@ export default function ProjectForm({ project, onClose, onSave }) {
   // 隶属项目选项：排除自身及其所有后代，避免层级关系形成环
   const parentOptions = (() => {
     const excluded = new Set();
-    if (project?.id) {
+    const selfId = project?.id || (isSubProject ? parentProjectId : null);
+    if (selfId) {
       const byParent = {};
       allProjects.forEach((p) => {
         const k = p.parentProjectId || '_root';
         (byParent[k] = byParent[k] || []).push(p.id);
       });
-      const stack = [project.id];
+      const stack = [selfId];
       while (stack.length) {
         const cur = stack.pop();
         (byParent[cur] || []).forEach((childId) => {
@@ -80,8 +97,17 @@ export default function ProjectForm({ project, onClose, onSave }) {
         });
       }
     }
-    return allProjects.filter((p) => p.id !== project?.id && !excluded.has(p.id) && !p.archived);
+    return allProjects.filter((p) => p.id !== selfId && !excluded.has(p.id) && !p.archived);
   })();
+
+  // 深度校验：父项目层级 >= MAX_DEPTH 时禁止再建子项目
+  const parentLevel = formData.parentProjectId ? getProjectLevel(formData.parentProjectId) : -1;
+  const depthExceeded = formData.parentProjectId && parentLevel >= MAX_DEPTH;
+  useEffect(() => {
+    if (depthExceeded) {
+      // 仅做禁用态提示，不阻断已有编辑流程
+    }
+  }, [depthExceeded]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -89,9 +115,15 @@ export default function ProjectForm({ project, onClose, onSave }) {
       alert('请填写项目名称');
       return;
     }
+    if (depthExceeded) {
+      alert(`已达最大层级（${MAX_DEPTH} 级），无法在此项目下创建子项目`);
+      return;
+    }
     if (formData.manager) pinMemberId(formData.manager);
     onSave({
       ...formData,
+      // 根项目统一用 null 表示（与后端归一化约定一致）
+      parentProjectId: formData.parentProjectId || null,
       projectTypeId: typeId || '',
     });
   };
@@ -156,6 +188,32 @@ export default function ProjectForm({ project, onClose, onSave }) {
             ))}
           </select>
         </div>
+
+        {!project && (
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">隶属项目</label>
+            <select
+              name="parentProjectId"
+              value={formData.parentProjectId || ''}
+              onChange={handleChange}
+              disabled={depthExceeded && !!formData.parentProjectId}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-smooth bg-white disabled:bg-slate-100"
+            >
+              <option value="">（无）主项目</option>
+              {parentOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {'  '.repeat(getProjectLevel(p.id))}{p.name}（{p.code || '无编号'}）
+                </option>
+              ))}
+            </select>
+            {depthExceeded && (
+              <p className="mt-1 flex items-center gap-1 text-xs text-amber-600">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                已达最大层级（{MAX_DEPTH} 级），无法在此项目下创建子项目
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4">
           <div>

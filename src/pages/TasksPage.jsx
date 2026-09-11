@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Plus, Filter, Search, Calendar, User, Flag, Clock, TrendingUp } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
@@ -46,6 +46,8 @@ export default function TasksPage() {
 
   const [view, setView] = useState('kanban');
   const [projectFilter, setProjectFilter] = useState('');
+  // 含子项目：按选中项目扩展为其全部子孙（含自身）
+  const [includeSub, setIncludeSub] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
   const [search, setSearch] = useState('');

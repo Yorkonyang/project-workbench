@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import Card from '@/components/ui/Card';
 import { FolderKanban, ArrowRight } from 'lucide-react';
 
-export default function ProjectStats({ projects }) {
+export default function ProjectStats({ projects, includeSubprojects = false }) {
   const navigate = useNavigate();
   const activeProjects = projects.filter((p) => !p.archived);
   const inProgress = activeProjects.filter((p) => p.status === 'in_progress').length;
@@ -27,7 +27,9 @@ export default function ProjectStats({ projects }) {
             </div>
             <div>
               <div className="text-2xl font-bold text-slate-800">{activeProjects.length}</div>
-              <div className="text-xs text-slate-500">进行中项目</div>
+              <div className="text-xs text-slate-500">
+                {includeSubprojects ? '根项目（含子项目）' : '进行中项目'}
+              </div>
             </div>
           </div>
           <div className="text-right">
@@ -49,6 +51,11 @@ export default function ProjectStats({ projects }) {
                   style={{ backgroundColor: p.color }}
                 />
                 <span className="text-sm text-slate-700 truncate flex-1">{p.name}</span>
+                {includeSubprojects && p._subtreeChildCount > 0 && (
+                  <span className="text-[10px] text-primary-500 bg-primary-50 px-1.5 py-0.5 rounded shrink-0">
+                    +{p._subtreeChildCount} 子
+                  </span>
+                )}
                 <span className="text-xs text-slate-400">{p.phase}</span>
               </div>
             ))}

@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Calendar, User, Flag, CheckSquare, FolderOpen, AlertTriangle, Users, Edit2, Plus, Archive, Bell, Clock, Trash2 } from 'lucide-react';
+import { ArrowLeft, Calendar, User, Flag, CheckSquare, FolderOpen, AlertTriangle, Users, Edit2, Plus, Archive, Bell, Clock, Trash2, GitMerge } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
@@ -16,8 +16,11 @@ import DocumentGrid from '@/components/documents/DocumentGrid';
 import DocumentForm from '@/components/documents/DocumentForm';
 import RiskList from '@/components/risks/RiskList';
 import TodoForm from '@/components/todos/TodoForm';
+import ProjectForm from '@/components/projects/ProjectForm';
+import MergeDialog from '@/components/projects/MergeDialog';
 import { getProjectStatusConfig, getPriorityConfig, dueDateLabel, isOverdue, formatDate, cn } from '@/lib/utils';
 import { useProjectStore } from '@/store/useProjectStore';
+import { MAX_DEPTH } from '@/lib/hierarchy';
 import { useOrgStore } from '@/store/useOrgStore';
 import { AVATAR_COLORS } from '@/config/theme';
 import { useTaskStore } from '@/store/useTaskStore';
@@ -27,6 +30,7 @@ import { useDocumentStore } from '@/store/useDocumentStore';
 import { useRiskStore } from '@/store/useRiskStore';
 import { useMemberStore } from '@/store/useMemberStore';
 import { useAccess } from '@/hooks/useAccess';
+import { apiClient } from '@/lib/apiClient';
 import { ROLES } from '@/config/permissions';
 
 const TABS = [
@@ -72,7 +76,10 @@ export default function ProjectDetailPage() {
   const deleteTask = useTaskStore((s) => s.deleteTask);
   const updateDocument = useDocumentStore((s) => s.updateDocument);
   const deleteDocument = useDocumentStore((s) => s.deleteDocument);
-  const { canManageProject } = useAccess();
+  const { canManageProject, canMergeProject } = useAccess();
+  const getSubtreeStats = useProjectStore((s) => s.getSubtreeStats);
+  const getProjectLevel = useProjectStore((s) => s.getProjectLevel);
+  const mergeProject = useProjectStore((s) => s.mergeProject);
 
   const [activeTab, setActiveTab] = useState('overview');
   const [showTaskForm, setShowTaskForm] = useState(false);
@@ -80,11 +87,64 @@ export default function ProjectDetailPage() {
   const [showTodoForm, setShowTodoForm] = useState(false);
   const [showDocumentForm, setShowDocumentForm] = useState(false);
 
+  // 子项目表单
+  const [showSubForm, setShowSubForm] = useState(false);
+  const [subParentId, setSubParentId] = useState('');
+  // 合并弹窗
+  const [showMergeDialog, setShowMergeDialog] = useState(false);
+  // P1-6：进度环「含子项目」聚合开关（默认关，不重复计数）
+  const [includeSubprojects, setIncludeSubprojects] = useState(false);
+
+  // 已合并源项目兜底：本地 store 查不到该项目时（已被软隐藏），用 includeMerged=1 再拉一次全量
+  // 命中且带 mergedInto → 展示"已合并到 X"横幅而非"项目不存在"
+  const [mergedFallback, setMergedFallback] = useState(null);
+  const [mergedFallbackLoading, setMergedFallbackLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    async function lookupMerged() {
+      try {
+        const all = await apiClient.getProjects(true);
+        if (cancelled) return;
+        const hit = (all || []).find((p) => p.id === id);
+        if (hit && hit.mergedInto) setMergedFallback(hit);
+      } catch (e) {
+        /* 兜底失败不阻断，保持"项目不存在"兜底文案 */
+      } finally {
+        if (!cancelled) setMergedFallbackLoading(false);
+      }
+    }
+    if (!project) {
+      setMergedFallbackLoading(true);
+      lookupMerged();
+    } else {
+      setMergedFallback(null);
+      setMergedFallbackLoading(false);
+    }
+    return () => { cancelled = true; };
+  }, [id, project]);
+
   // 编辑目标（用于打开 Form 时回填数据；null 表示新建）
   const [editingTask, setEditingTask] = useState(null);
   const [editingMilestone, setEditingMilestone] = useState(null);
   const [editingTodo, setEditingTodo] = useState(null);
   const [editingDocument, setEditingDocument] = useState(null);
+
+  // 子项目保存
+  const addProject = useProjectStore((s) => s.addProject);
+  const handleSaveSub = async (data) => {
+    await addProject(data);
+    setShowSubForm(false);
+    setSubParentId('');
+  };
+
+  // 合并执行
+  const handleMerge = async (sourceId, targetId, strategy) => {
+    await mergeProject(sourceId, targetId, strategy);
+    setShowMergeDialog(false);
+    // 跳转并刷新到目标项目详情
+    navigate(`/projects/${targetId}`);
+    window.location.reload();
+  };
 
   // 通用删除（二次确认）
   const confirmDelete = (msg) => window.confirm(msg);
@@ -128,6 +188,44 @@ export default function ProjectDetailPage() {
   const closeTodoForm = () => { setShowTodoForm(false); setEditingTodo(null); };
 
   if (!project) {
+    // 兜底：被合并的源项目不在默认列表里，但 includeMerged=1 能查到 → 显示"已合并到 X"而非"项目不存在"
+    if (mergedFallback) {
+      const target = mergedFallback.mergedInto
+        ? allProjects.find((p) => p.id === mergedFallback.mergedInto)
+        : null;
+      return (
+        <PageContainer>
+          <button
+            onClick={() => navigate('/')}
+            className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 mb-4"
+          >
+            <ArrowLeft className="w-4 h-4" /> 返回仪表盘
+          </button>
+          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-4 py-3">
+            <GitMerge className="w-4 h-4 shrink-0" />
+            <span>
+              该项目已合并到 <span className="font-medium">{target ? `${target.name}（${target.code}）` : '未知项目'}</span>
+            </span>
+            {target && (
+              <button
+                onClick={() => navigate(`/projects/${target.id}`)}
+                className="ml-1 text-primary-600 hover:text-primary-700 font-medium underline underline-offset-2"
+              >
+                前往目标项目 →
+              </button>
+            )}
+          </div>
+          <p className="text-sm text-slate-400 mt-3">{mergedFallback.code} - {mergedFallback.name}</p>
+        </PageContainer>
+      );
+    }
+    if (mergedFallbackLoading) {
+      return (
+        <PageContainer>
+          <EmptyState title="加载中" description="正在查找该项目" />
+        </PageContainer>
+      );
+    }
     return (
       <PageContainer>
         <EmptyState title="项目不存在" description="该项目可能已被删除" actionLabel="返回仪表盘" onAction={() => navigate('/')} />
@@ -162,6 +260,14 @@ export default function ProjectDetailPage() {
   const openTodos = todos.filter((t) => !t.completed).length;
   const manager = allMembers.find((m) => m.id === project.manager);
 
+  // 进度环数值：默认按自身进度；开启「含子项目进度」时按子孙任务完成率聚合（不重复计数）
+  const detailProgress = includeSubprojects ? getSubtreeStats(project.id).progress : (project.progress || 0);
+
+  // 已合并横幅：源项目已被合并到目标（仅 active 且 mergedInto 非空时显示）
+  const mergedTarget = project.mergedInto
+    ? allProjects.find((p) => p.id === project.mergedInto)
+    : null;
+
   return (
     <PageContainer>
       {/* Back button */}
@@ -172,6 +278,22 @@ export default function ProjectDetailPage() {
         <ArrowLeft className="w-4 h-4" />
         返回仪表盘
       </button>
+
+      {/* 已合并横幅 */}
+      {mergedTarget && (
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-4 py-2.5 mb-4">
+          <GitMerge className="w-4 h-4 shrink-0" />
+          <span>
+            该项目已合并到 <span className="font-medium">{mergedTarget.name}</span>（{mergedTarget.code}）
+          </span>
+          <button
+            onClick={() => navigate(`/projects/${mergedTarget.id}`)}
+            className="ml-1 text-primary-600 hover:text-primary-700 font-medium underline underline-offset-2"
+          >
+            前往目标项目 →
+          </button>
+        </div>
+      )}
 
       {/* Project Header */}
       <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-5 mb-4">
@@ -227,15 +349,49 @@ export default function ProjectDetailPage() {
                     fill="none"
                     stroke={project.color}
                     strokeWidth="6"
-                    strokeDasharray={`${2 * Math.PI * 34 * project.progress / 100} ${2 * Math.PI * 34}`}
+                    strokeDasharray={`${2 * Math.PI * 34 * detailProgress / 100} ${2 * Math.PI * 34}`}
                     strokeLinecap="round"
                   />
                 </svg>
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="text-lg font-bold" style={{ color: project.color }}>{project.progress}%</span>
+                  <span className="text-lg font-bold" style={{ color: project.color }}>{detailProgress}%</span>
                 </div>
               </div>
               <span className="text-xs text-slate-400 mt-1">总体进度</span>
+            </div>
+
+            {/* 右侧操作区：新建子项目 / 合并到… */}
+            <div className="flex flex-col gap-2 items-stretch">
+              {canManageProject(project) && getProjectLevel(project.id) < MAX_DEPTH && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { setSubParentId(project.id); setShowSubForm(true); }}
+                  className="whitespace-nowrap"
+                >
+                  <Plus className="w-4 h-4" /> 新建子项目
+                </Button>
+              )}
+              {canMergeProject(project) && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowMergeDialog(true)}
+                  className="whitespace-nowrap"
+                >
+                  <GitMerge className="w-4 h-4" /> 合并到…
+                </Button>
+              )}
+              {/* P1-6：含子项目进度聚合开关（默认关） */}
+              <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={includeSubprojects}
+                  onChange={(e) => setIncludeSubprojects(e.target.checked)}
+                  className="rounded border-slate-300"
+                />
+                含子项目进度
+              </label>
             </div>
           </div>
         </div>
@@ -749,6 +905,25 @@ export default function ProjectDetailPage() {
             </div>
           )}
         </Card>
+      )}
+
+      {/* 子项目表单弹窗 */}
+      {showSubForm && (
+        <ProjectForm
+          parentProjectId={subParentId}
+          isSubProject={!!subParentId}
+          onClose={() => { setShowSubForm(false); setSubParentId(''); }}
+          onSave={handleSaveSub}
+        />
+      )}
+
+      {/* 合并弹窗 */}
+      {showMergeDialog && (
+        <MergeDialog
+          sourceProject={project}
+          onClose={() => setShowMergeDialog(false)}
+          onMerge={handleMerge}
+        />
       )}
     </PageContainer>
   );

@@ -80,8 +80,9 @@ class ApiClient {
     }
 
     // Projects
-    async getProjects() {
-        return this.request('/projects');
+    async getProjects(includeMerged = false) {
+        const qs = includeMerged ? '?includeMerged=1' : '';
+        return this.request(`/projects${qs}`);
     }
 
     async createProject(data) {
@@ -102,6 +103,30 @@ class ApiClient {
         return this.request(`/projects/${id}`, {
             method: 'DELETE',
         });
+    }
+
+    // 项目合并 - 预览（只读，不落库）
+    async previewMerge(sourceId, targetId) {
+        return this.request(`/projects/${sourceId}/merge-preview?targetId=${encodeURIComponent(targetId)}`);
+    }
+
+    // 项目合并 - 执行（原子）
+    async mergeProject(sourceId, targetId, strategy = 'keep') {
+        return this.request(`/projects/${sourceId}/merge`, {
+            method: 'POST',
+            body: JSON.stringify({ targetId, strategy }),
+        });
+    }
+
+    // 子树查询（含全部子孙）
+    async getProjectSubtree(id) {
+        return this.request(`/projects/${id}/subtree`);
+    }
+
+    // 按父过滤获取子项目（parentId=__root__ 取根项目）
+    async getProjectChildren(parentId) {
+        const query = parentId != null ? `?parentId=${encodeURIComponent(parentId)}` : '';
+        return this.request(`/projects${query}`);
     }
 
     // Tasks

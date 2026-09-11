@@ -11,6 +11,7 @@ import {
   XCircle,
   FileText,
   Trash2,
+  Plus,
 } from 'lucide-react';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -21,6 +22,7 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { useMemberStore } from '@/store/useMemberStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
 import { cn } from '@/lib/utils';
+import { MAX_DEPTH } from '@/lib/hierarchy';
 
 const STATUS_CONFIG = {
   planned: { label: '待启动', color: 'bg-slate-100 text-slate-600' },
@@ -84,6 +86,8 @@ export default function ProjectCard({ project, onEdit, onArchive, onRestore, onD
   const isRejected = project.archiveStatus === 'rejected';
   const isAdmin = currentUser?.role === 'admin';
   const isOwner = currentUserId === project.ownerId || currentUserId === project.manager;
+  const getProjectLevel = useProjectStore((s) => s.getProjectLevel);
+  const atMaxDepth = getProjectLevel(project.id) >= MAX_DEPTH;
 
   const handleRestore = () => {
     restoreProject(project.id);

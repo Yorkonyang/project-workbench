@@ -1,10 +1,16 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import Card from '@/components/ui/Card';
 import { TASK_STATUS_ORDER, TASK_STATUS_CONFIG } from '@/config/theme';
+import { collectSubtree } from '@/lib/hierarchy';
 
-export default function ProgressComparison({ projects, tasks }) {
+export default function ProgressComparison({ projects, tasks, includeSubprojects = false }) {
   const data = projects.map((p) => {
-    const projTasks = tasks.filter((t) => t.projectId === p.id);
+    // 按层级汇总时，用 collectSubtree 把「自身 + 子孙」的任务都计入该根（不重复计数）
+    const projTaskSet = includeSubprojects ? collectSubtree(projects, p.id) : null;
+    const projTasks = tasks.filter((t) => {
+      const tid = t.projectId || t.project_id;
+      return projTaskSet ? projTaskSet.has(tid) : tid === p.id;
+    });
     const item = { name: p.code };
     TASK_STATUS_ORDER.forEach((status) => {
       item[TASK_STATUS_CONFIG[status].label] = projTasks.filter((t) => t.status === status).length;

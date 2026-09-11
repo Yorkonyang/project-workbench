@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const qingflow = require('./qingflow');
 const ac = require('./accessControl');
 const sso = require('./auth');
+const hierarchy = require('./hierarchy');
 
 const PORT = process.env.PORT || 3000;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../data/workbench.db');
@@ -353,7 +354,23 @@ const server = http.createServer(async (req, res) => {
             const tasks = data.tasks.filter(t => t.projectId === projectId || t.project_id === projectId);
             sendResponse(res, 200, { project: data.projects.find(p => p.id === projectId), tasks });
         } else {
-            sendResponse(res, 200, ac.visibleProjects(data, userId));
+            // GET /api/projects?parentId=<pid|__root__>&includeMerged=0|1
+            // parentId=__root__ 或省略 → 仅根项目；includeMerged=1 不过滤已合并项
+            const parentId = url.searchParams.get('parentId');
+            const includeMerged = url.searchParams.get('includeMerged') === '1';
+            let list = ac.visibleProjects(data, userId);
+            if (!includeMerged) {
+                list = list.filter((p) => !p.mergedInto);
+            }
+            if (parentId !== null) {
+                const wantRoot = parentId === '__root__' || parentId === '';
+                list = list.filter((p) => {
+                    const par = hierarchy.normalizeParent(p.parentProjectId);
+                    if (wantRoot) return par === null;
+                    return par === parentId;
+                });
+            }
+            sendResponse(res, 200, list);
         }
         return;
     }
@@ -502,6 +519,182 @@ const server = http.createServer(async (req, res) => {
         } else {
             sendResponse(res, 404, { error: 'Project not found' });
         }
+        return;
+    }
+
+    // ===== 合并预览（只读，不落库）GET /api/projects/:id/merge-preview?targetId=<tid> =====
+    if (pathname.match(/^\/api\/projects\/[\w-]+\/merge-preview$/) && method === 'GET') {
+        const id = pathname.split('/')[3];
+        const targetId = url.searchParams.get('targetId');
+        const data = loadData();
+        const userId = ac.getUserId(req, url);
+        const respond = (status, payload) => {
+            if (status >= 400) {
+                sendResponse(res, status, { ok: false, error: payload.error || payload });
+            } else {
+                sendResponse(res, status, { ok: true, ...payload });
+            }
+            return true;
+        };
+        const source = data.projects.find(p => p.id === id);
+        const target = data.projects.find(p => p.id === targetId);
+        if (!source) return respond(404, { error: '源项目不存在' });
+        if (!target) return respond(404, { error: '目标项目不存在' });
+        if (!ac.canManageProject(data, userId, id)) return respond(403, { error: '无权操作源项目' });
+        if (source.id === target.id) return respond(409, { error: '不能合并到自身' });
+        if (source.archived === 1) return respond(409, { error: '源项目已归档，不能合并' });
+        if (source.mergedInto) return respond(409, { error: '源项目已合并，不能再次合并' });
+        if (target.archived === 1) return respond(409, { error: '目标项目已归档，不能合并到它' });
+        // 防环：target 不能是 source（含其子项目）的后代
+        if (hierarchy.wouldCreateCycle(data.projects, source.id, target.id)) {
+            return respond(409, { error: '合并会形成环（目标为源的子项目）' });
+        }
+        const counts = {
+            tasks: data.tasks.filter(t => (t.projectId || t.project_id) === source.id).length,
+            todos: data.todos.filter(t => t.projectId === source.id).length,
+            documents: data.documents.filter(d => d.projectId === source.id).length,
+            milestones: data.milestones.filter(m => m.projectId === source.id).length,
+            risks: data.risks.filter(r => r.projectId === source.id).length,
+            resources: data.resources.filter(r => r.projectId === source.id).length,
+            childProjects: hierarchy.getChildren(data.projects, source.id).length,
+        };
+        const childProjects = hierarchy.getChildren(data.projects, source.id)
+            .map(p => ({ id: p.id, name: p.name, code: p.code }));
+        // 深度超限判定：keep 策略下直属子项目改挂到 target 后是否 > MAX_DEPTH
+        const targetLevel = hierarchy.getLevel(data.projects, target.id);
+        const depthExceeded = hierarchy.getChildren(data.projects, source.id)
+            .some(c => targetLevel + 1 > hierarchy.MAX_DEPTH);
+        const codeCollision = !!source.code && (target.code === source.code || (target.subtreeCodes || []).includes(source.code));
+        respond(200, {
+            sourceId: source.id,
+            targetId: target.id,
+            counts,
+            wouldCreateCycle: false,
+            depthExceeded,
+            codeCollision,
+            childProjects,
+        });
+        return;
+    }
+
+    // ===== 执行合并（原子写）POST /api/projects/:id/merge =====
+    if (pathname.match(/^\/api\/projects\/[\w-]+\/merge$/) && method === 'POST') {
+        const id = pathname.split('/')[3];
+        const body = await parseBody(req);
+        const data = loadData();
+        const userId = ac.getUserId(req, url);
+        const respond = (status, payload) => {
+            if (status >= 400) {
+                sendResponse(res, status, { success: false, error: payload.error || payload });
+            } else {
+                sendResponse(res, status, { success: true, ...payload });
+            }
+            return true;
+        };
+        const source = data.projects.find(p => p.id === id);
+        const targetId = body.targetId;
+        const target = data.projects.find(p => p.id === targetId);
+        if (!source) return respond(404, { error: '源项目不存在' });
+        if (!target) return respond(404, { error: '目标项目不存在' });
+        if (!ac.canManageProject(data, userId, id)) return respond(403, { error: '无权操作源项目' });
+        if (source.id === target.id) return respond(409, { error: '不能合并到自身' });
+        if (source.archived === 1) return respond(409, { error: '源项目已归档，不能合并' });
+        if (source.mergedInto) return respond(409, { error: '源项目已合并，不能再次合并' });
+        if (target.archived === 1) return respond(409, { error: '目标项目已归档，不能合并到它' });
+        if (hierarchy.wouldCreateCycle(data.projects, source.id, target.id)) {
+            return respond(409, { error: '合并会形成环（目标为源的子项目）' });
+        }
+        const strategy = body.strategy === 'flatten' ? 'flatten' : 'keep';
+
+        // 0) 先统计源项目自身关联实体的数量（repoint 之后无法再按 source.id 统计）
+        const sourceCounts = {
+            tasks: data.tasks.filter(t => (t.projectId || t.project_id) === source.id).length,
+            todos: data.todos.filter(t => t.projectId === source.id).length,
+            documents: data.documents.filter(d => d.projectId === source.id).length,
+            milestones: data.milestones.filter(m => m.projectId === source.id).length,
+            risks: data.risks.filter(r => r.projectId === source.id).length,
+            resources: data.resources.filter(r => r.projectId === source.id).length,
+            childProjects: hierarchy.getChildren(data.projects, source.id).length,
+        };
+
+        // 1) 源自身关联实体 projectId → target（task 同时更新 project_id）
+        const repointProjectId = (entity) => {
+            if (entity.projectId === source.id) entity.projectId = target.id;
+            if (entity.project_id === source.id) entity.project_id = target.id;
+        };
+        data.tasks.forEach(repointProjectId);
+        data.todos.forEach(repointProjectId);
+        data.documents.forEach(repointProjectId);
+        data.milestones.forEach(repointProjectId);
+        data.risks.forEach(repointProjectId);
+        data.resources.forEach(repointProjectId);
+
+        // 2) 子项目改挂（keep：保留层级；flatten：整棵子树拍平到 target）
+        const reparented = new Set();
+        const directChildren = hierarchy.getChildren(data.projects, source.id);
+        let flattened = strategy === 'flatten';
+        if (strategy === 'flatten') {
+            hierarchy.getDescendants(data.projects, source.id).forEach(desc => {
+                const p = data.projects.find(x => x.id === desc.id);
+                if (p) { p.parentProjectId = target.id; reparented.add(p.id); }
+            });
+        } else {
+            // keep：直属子项目 parentProjectId → target；若改挂后 level > MAX_DEPTH 则递归拍平整棵子树
+            const targetLevel = hierarchy.getLevel(data.projects, target.id);
+            const flattenDescendantsOf = (parentId) => {
+                hierarchy.getDescendants(data.projects, parentId).forEach(desc => {
+                    const p = data.projects.find(x => x.id === desc.id);
+                    if (p) { p.parentProjectId = target.id; reparented.add(p.id); }
+                });
+            };
+            directChildren.forEach(child => {
+                if (targetLevel + 1 > hierarchy.MAX_DEPTH) {
+                    // 深度超限：把该子项目整棵子树拍平到 target
+                    flattened = true;
+                    const p = data.projects.find(x => x.id === child.id);
+                    if (p) { p.parentProjectId = target.id; reparented.add(p.id); }
+                    flattenDescendantsOf(child.id);
+                } else {
+                    const p = data.projects.find(x => x.id === child.id);
+                    if (p) { p.parentProjectId = target.id; reparented.add(p.id); }
+                }
+            });
+        }
+
+        // 3) 源项目软隐藏
+        source.mergedInto = target.id;
+        source.mergedAt = new Date().toISOString();
+        source.updated_at = new Date().toISOString();
+
+        // 4) 原子写
+        saveData(data);
+
+        respond(200, {
+            sourceId: source.id,
+            targetId: target.id,
+            movedCounts: sourceCounts,
+            flattened,
+        });
+        return;
+    }
+
+    // ===== 子树查询 GET /api/projects/:id/subtree =====
+    if (pathname.match(/^\/api\/projects\/[\w-]+\/subtree$/) && method === 'GET') {
+        const id = pathname.split('/')[3];
+        const data = loadData();
+        const userId = ac.getUserId(req, url);
+        const project = data.projects.find(p => p.id === id);
+        if (!project) {
+            sendResponse(res, 404, { error: 'Project not found' });
+            return;
+        }
+        if (!ac.canManageProject(data, userId, id)) {
+            sendResponse(res, 403, { error: '无权访问该项目子树' });
+            return;
+        }
+        const ids = hierarchy.collectSubtree(data.projects, id);
+        const descendants = data.projects.filter(p => ids.has(p.id) && p.id !== id);
+        sendResponse(res, 200, { project, descendants });
         return;
     }
 

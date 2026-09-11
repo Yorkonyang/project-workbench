@@ -112,6 +112,7 @@ export default function TaskKanban({ tasks, onTaskClick, projectFilter, onEdit, 
                             {...provided.draggableProps}
                             {...provided.dragHandleProps}
                           >
+                            <ProjectBreadcrumb projectId={task.projectId} projects={projects} className="mb-1" />
                             <TaskCard
                               task={task}
                               project={project}
