@@ -84,14 +84,29 @@ export default function ProjectForm({ project, onClose, onSave, parentProjectId 
   // 隶属项目选项：排除自身及其所有后代，避免层级关系形成环
   const parentOptions = (() => {
     const excluded = new Set();
-    const selfId = project?.id || (isSubProject ? parentProjectId : null);
-    if (selfId) {
+    if (project) {
+      // 编辑项目：排除自身及其全部后代（防止改挂到自己子孙下成环）
       const byParent = {};
       allProjects.forEach((p) => {
         const k = p.parentProjectId || '_root';
         (byParent[k] = byParent[k] || []).push(p.id);
       });
-      const stack = [selfId];
+      const stack = [project.id];
+      while (stack.length) {
+        const cur = stack.pop();
+        (byParent[cur] || []).forEach((childId) => {
+          if (!excluded.has(childId)) { excluded.add(childId); stack.push(childId); }
+        });
+      }
+      excluded.add(project.id);
+    } else if (isSubProject && parentProjectId) {
+      // 新建子项目：保留父项目本身（隶属项目下拉需带出点击的父项目），仅排除其子孙（防环）
+      const byParent = {};
+      allProjects.forEach((p) => {
+        const k = p.parentProjectId || '_root';
+        (byParent[k] = byParent[k] || []).push(p.id);
+      });
+      const stack = [parentProjectId];
       while (stack.length) {
         const cur = stack.pop();
         (byParent[cur] || []).forEach((childId) => {
@@ -99,7 +114,7 @@ export default function ProjectForm({ project, onClose, onSave, parentProjectId 
         });
       }
     }
-    return allProjects.filter((p) => p.id !== selfId && !excluded.has(p.id) && !p.archived);
+    return allProjects.filter((p) => !excluded.has(p.id) && !p.archived);
   })();
 
   // 深度校验：父项目层级 >= MAX_DEPTH 时禁止再建子项目
