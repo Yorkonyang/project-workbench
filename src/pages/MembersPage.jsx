@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Plus, Users, UserCircle, Shield, Building2 } from 'lucide-react';
+import { Plus, Users, UserCircle, Shield, Building2, Eye, EyeOff, Copy, Check } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Button from '@/components/ui/Button';
 import Select from '@/components/ui/Select';
@@ -136,11 +136,24 @@ export default function MembersPage() {
     setResetTarget(member);
   };
 
+  const [showResetPwd, setShowResetPwd] = useState(false);
+  const copyResetPwd = async () => {
+    try {
+      await navigator.clipboard.writeText(resetResult?.password || '');
+      setShowResetPwd(false);
+      setResetResult(null);
+    } catch {
+      alert('复制失败，请手动记录');
+    }
+  };
+
   const confirmResetPassword = () => {
     if (!resetTarget) return;
     const result = resetPassword(resetTarget.id);
     if (result.success) {
+      // 安全：重置结果默认脱敏（******），需显式点「显示」才短暂明文
       setResetResult({ member: resetTarget, password: result.password });
+      setShowResetPwd(false);
     } else {
       alert(result.error || '重置失败');
     }
@@ -355,8 +368,26 @@ export default function MembersPage() {
               <p className="text-xs text-slate-500 mb-3">
                 成员「{resetResult.member.name}」的新密码为：
               </p>
-              <div className="px-4 py-2.5 bg-slate-50 rounded-lg font-mono text-sm font-bold text-slate-800 border border-slate-200">
-                {resetResult.password}
+              <div className="flex items-center gap-2 w-full px-4 py-2.5 bg-slate-50 rounded-lg font-mono text-sm font-bold text-slate-800 border border-slate-200">
+                <span className="flex-1">
+                  {showResetPwd ? resetResult.password : '••••••••'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowResetPwd((v) => !v)}
+                  className="text-slate-400 hover:text-slate-600 shrink-0"
+                  title={showResetPwd ? '隐藏' : '显示'}
+                >
+                  {showResetPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={copyResetPwd}
+                  className="text-slate-400 hover:text-primary-600 shrink-0"
+                  title="复制新密码"
+                >
+                  <Copy className="w-4 h-4" />
+                </button>
               </div>
               <p className="text-xs text-amber-600 mt-3">
                 请将密码告知该成员，登录后可自行修改

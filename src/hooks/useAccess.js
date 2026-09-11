@@ -172,6 +172,26 @@ export function useAccess() {
         return canManageProject(project);
     };
 
+    /**
+     * 归档权限（§8#7）：可管理者 或 任一祖先项目的负责人/创建者命中当前用户。
+     * 与后端 accessControl.canArchiveProject 语义一致（子项目归档权限继承父 owner 链）。
+     */
+    const canArchiveProject = (project) => {
+        if (!project) return false;
+        if (canManageProject(project)) return true;
+        let cur = project;
+        let hops = 0;
+        while (cur && hops < 10) {
+            if (!cur.parentProjectId || cur.parentProjectId === '__root__') break;
+            const parent = projectById(cur.parentProjectId);
+            if (!parent) break;
+            if (parent.ownerId === currentUserId || parent.manager === currentUserId) return true;
+            cur = parent;
+            hops++;
+        }
+        return false;
+    };
+
     // 可见项目集合（含可见项目的全部子孙，遵循可见性继承：能看父即能看子）
     const visibleProjectIds = (() => {
         const ids = new Set();
@@ -190,6 +210,7 @@ export function useAccess() {
         isAdmin,
         isProjectOwner,
         canManageProject,
+        canArchiveProject,
         canMergeProject,
         canViewProject,
         visibleProjectIds,

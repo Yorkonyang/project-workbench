@@ -264,12 +264,34 @@ function canMergeProject(data, userId, projectId) {
     return true;
 }
 
+// 能否归档某项目：可管理者 或 任一祖先项目的负责人/创建者（§8#7 子项目归档权限继承父 owner 链）
+// 用于 archive-direct 与 approve-archive；canManageProject 仍用于其他管理操作（不含跨层级继承）。
+function canArchiveProject(data, userId, projectId) {
+    if (canManageProject(data, userId, projectId)) return true;
+    if (isAdmin(data, userId)) return true;
+    // 向上回溯父链：任一祖先项目的 owner/manager 命中当前用户即可归档
+    const projects = data.projects || [];
+    const byId = new Map(projects.map((p) => [p.id, p]));
+    let cur = byId.get(projectId);
+    let hops = 0;
+    while (cur && hops < 10) {
+        if (!cur.parentProjectId || cur.parentProjectId === '__root__') break;
+        const parent = byId.get(cur.parentProjectId);
+        if (!parent) break;
+        if (parent.ownerId === userId || parent.manager === userId) return true;
+        cur = parent;
+        hops++;
+    }
+    return false;
+}
+
 module.exports = {
     getUserId,
     getUserRole,
     isAdmin,
     isProjectOwner,
     canManageProject,
+    canArchiveProject,
     canMergeProject,
     canManageTask,
     canCreateTask,

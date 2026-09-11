@@ -31,12 +31,14 @@ export default function MemberForm({ onClose, member = null }) {
         avatarColor: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
       };
     }
+    // 安全：编辑现有成员时不回填明文密码（避免在输入框/请求体里暴露旧密码）
+    // 用户若想改密，走「修改密码」专用流程（ChangePasswordForm，需验证原密码）
     return {
       name: member.name || '',
       role: member.role || 'member',
       departmentId: member.departmentId || '',
       email: member.email || '',
-      password: member.password || '',
+      password: '',
       phone: member.phone || '',
       title: member.title || '',
       projectIds: member.projectIds || [],
@@ -53,6 +55,9 @@ export default function MemberForm({ onClose, member = null }) {
       department: form.departmentId, // 兼容旧字段
     };
     if (member) {
+      // 安全：编辑态留空密码则不提交 password 字段（保留旧密码），
+      // 仅填了新密码才覆盖。避免空串抹掉成员现有密码。
+      if (!form.password.trim()) delete payload.password;
       updateMember(member.id, payload);
     } else {
       addMember(payload);

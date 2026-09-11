@@ -633,6 +633,88 @@ async function notifyOverdue(notification) {
     return await sendToQSource(payload);
 }
 
+// ===== 项目生命周期通知（合并 / 归档），推送给目标项目负责人 =====
+/**
+ * 解析项目负责人的邮箱（ownerId 创建者 或 manager 指定负责人）。
+ * 多个负责人用分号拼接；找不到邮箱返回空串。
+ */
+function resolveOwnerEmails(project) {
+    const ids = [project?.ownerId, project?.manager].filter((x) => x);
+    const seen = new Set();
+    const emails = [];
+    for (const id of ids) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const m = db.getMemberById(id) || db.getMemberByName(id) || db.getMemberByEmail(id);
+        if (m?.email && !emails.includes(m.email)) emails.push(m.email);
+    }
+    return emails;
+}
+
+/**
+ * 子项目合并通知：推送给目标项目的所有者/负责人邮箱。
+ * @param {Object} info
+ *   info.source  - 源项目对象（含 name/code）
+ *   info.target  - 目标项目对象（含 name/code）
+ *   info.movedCounts - 各实体移动数量
+ *   info.strategy - 'keep' | 'flatten'
+ */
+async function notifyProjectMerged(info) {
+    const { source, target, movedCounts = {}, strategy = 'keep' } = info || {};
+    const ownerEmails = resolveOwnerEmails(target);
+    const signEmail = ownerEmails[0] || '';
+
+    const movedParts = [];
+    if (movedCounts.tasks) movedParts.push(`任务 ${movedCounts.tasks}`);
+    if (movedCounts.todos) movedParts.push(`待办 ${movedCounts.todos}`);
+    if (movedCounts.documents) movedParts.push(`文档 ${movedCounts.documents}`);
+    if (movedCounts.milestones) movedParts.push(`里程碑 ${movedCounts.milestones}`);
+    if (movedCounts.risks) movedParts.push(`风险 ${movedCounts.risks}`);
+    if (movedCounts.childProjects) movedParts.push(`子项目 ${movedCounts.childProjects}`);
+    const movedText = movedParts.length ? `（${movedParts.join('、')}）` : '（无关联实体）';
+
+    const strategyText = strategy === 'flatten' ? '子树拍平' : '保留层级';
+    const payload = {
+        bt: `项目合并：${source?.name || source?.code || '未知'} → ${target?.name || target?.code || '未知'}`,
+        ms: `子项目「${source?.name || source?.code}」已合并入「${target?.name || target?.code}」（${strategyText}），移动 ${movedText}。`,
+        zrr: ownerEmails.join(';'),
+        yxj: '低优先级',
+        jzrq: new Date().toISOString().split('T')[0],
+        ssxm: target?.name || target?.code || '项目工作台',
+        zht: '已合并',
+        taskUrl: buildFrontendUrl(`/projects/${target?.id}`, signEmail, { type: 'project-merged', sourceId: source?.id, targetId: target?.id }),
+    };
+
+    console.log('[轻流推送] 项目合并通知:', payload);
+    return await sendToQSource(payload);
+}
+
+/**
+ * 项目归档通知：推送给被归档项目的所有者/负责人邮箱。
+ * @param {Object} info
+ *   info.project  - 被归档项目对象
+ *   info.tasksUpdated - 级联归档的任务数
+ */
+async function notifyProjectArchived(info) {
+    const { project, tasksUpdated = 0 } = info || {};
+    const ownerEmails = resolveOwnerEmails(project);
+    const signEmail = ownerEmails[0] || '';
+
+    const payload = {
+        bt: `项目归档：${project?.name || project?.code || '未知'}`,
+        ms: `项目「${project?.name || project?.code}」已归档，级联归档任务 ${tasksUpdated} 项。如需恢复请联系管理员。`,
+        zrr: ownerEmails.join(';'),
+        yxj: '低优先级',
+        jzrq: new Date().toISOString().split('T')[0],
+        ssxm: project?.name || project?.code || '项目工作台',
+        zht: '已归档',
+        taskUrl: buildFrontendUrl(`/projects/${project?.id}`, signEmail, { type: 'project-archived', id: project?.id }),
+    };
+
+    console.log('[轻流推送] 项目归档通知:', payload);
+    return await sendToQSource(payload);
+}
+
 async function sendToQSource(payload) {
     const { baseUrl, qsourceId } = pushConfig;
 
@@ -696,6 +778,8 @@ module.exports = {
     notifyTaskCreated,
     notifyTodoCreated,
     notifyOverdue,
+    notifyProjectMerged,
+    notifyProjectArchived,
     addFormData,
     testConnection,
 };

@@ -57,8 +57,9 @@ export default function ProjectForm({ project, onClose, onSave, parentProjectId 
       const parent = allProjects.find((p) => p.id === parentProjectId);
       if (parent) {
         base.parentProjectId = parent.id;
-        // 子项目继承父项目的负责人、颜色、起止区间（P0 仍用全局顺序编号，不采用层级编号）
+        // 子项目继承父项目的负责人、所有者、颜色、起止区间（§8#7 权限继承）
         base.manager = parent.manager || '';
+        base.ownerId = parent.ownerId || '';
         base.color = parent.color || COLORS[0].value;
         if (parent.startDate) base.startDate = parent.startDate;
         if (parent.endDate) base.endDate = parent.endDate;

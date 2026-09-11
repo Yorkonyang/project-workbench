@@ -442,6 +442,11 @@ const server = http.createServer(async (req, res) => {
                 }
             });
             saveData(data);
+            // 推送轻流通知给项目所有者/负责人（不阻塞，失败仅记日志）
+            qingflow.notifyProjectArchived({
+                project: data.projects[index],
+                tasksUpdated,
+            }).catch((e) => console.warn('[轻流推送] 归档通知失败:', e.message));
             sendResponse(res, 200, { project: data.projects[index], tasksUpdated });
         } else {
             sendResponse(res, 404, { error: 'Project not found' });
@@ -456,7 +461,7 @@ const server = http.createServer(async (req, res) => {
         const userId = ac.getUserId(req, url);
         const index = data.projects.findIndex(p => p.id === id);
         if (index !== -1) {
-            if (!ac.canManageProject(data, userId, id)) {
+            if (!ac.canArchiveProject(data, userId, id)) {
                 sendResponse(res, 403, { error: '无权归档该项目' });
                 return;
             }
@@ -475,6 +480,11 @@ const server = http.createServer(async (req, res) => {
                 }
             });
             saveData(data);
+            // 推送轻流通知给项目所有者/负责人（不阻塞，失败仅记日志）
+            qingflow.notifyProjectArchived({
+                project: data.projects[index],
+                tasksUpdated,
+            }).catch((e) => console.warn('[轻流推送] 归档通知失败:', e.message));
             sendResponse(res, 200, { project: data.projects[index], tasksUpdated });
         } else {
             sendResponse(res, 404, { error: 'Project not found' });
@@ -699,6 +709,14 @@ const server = http.createServer(async (req, res) => {
 
         // 4) 原子写
         saveData(data);
+
+        // 4.5) 推送轻流通知给目标项目负责人（不阻塞主流程，失败仅记日志）
+        qingflow.notifyProjectMerged({
+            source,
+            target,
+            movedCounts: sourceCounts,
+            strategy,
+        }).catch((e) => console.warn('[轻流推送] 合并通知失败:', e.message));
 
         respond(200, {
             sourceId: source.id,
