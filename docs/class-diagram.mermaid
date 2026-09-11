@@ -1,0 +1,101 @@
+%% 数据模型与类关系图 — 多级子项目与项目合并
+
+classDiagram
+  class Project {
+    +string id
+    +string parentProjectId
+    +number level  %% 派生，不持久化
+    +string mergedInto
+    +string mergedAt
+    +string code
+    +string name
+    +string status
+    +string color
+    +string manager
+    +string ownerId
+    +string startDate
+    +string endDate
+  }
+  class Task {
+    +string id
+    +string projectId
+    +string project_id
+  }
+  class Todo {
+    +string id
+    +string projectId
+  }
+  class Document {
+    +string id
+    +string projectId
+    +string ownerId
+  }
+  class Milestone {
+    +string id
+    +string projectId
+  }
+  class Risk {
+    +string id
+    +string projectId
+  }
+  class Resource {
+    +string id
+    +string projectId
+  }
+  class ProjectMergeLog {
+    +string id
+    +string sourceId
+    +string targetId
+    +string strategy
+    +object movedCounts
+    +string timestamp
+    +string expiresAt
+  }
+
+  Project "1" o-- "0..*" Project : parentProjectId 自关联(防环)
+  Project "1" o-- "0..*" Task : projectId
+  Project "1" o-- "0..*" Todo : projectId
+  Project "1" o-- "0..*" Document : projectId
+  Project "1" o-- "0..*" Milestone : projectId
+  Project "1" o-- "0..*" Risk : projectId
+  Project "1" o-- "0..*" Resource : projectId
+  ProjectMergeLog "1" .. "2" Project : source→target
+
+  class useProjectStore {
+    +getProjectLevel(id)
+    +getChildren(id)
+    +getDescendants(id)
+    +getAncestors(id)
+    +getMergeCandidates(id)
+    +previewMerge(s,t)
+    +mergeProject(s,t,strategy)
+    +getSubtreeStats(id)
+  }
+  class apiClient {
+    +mergeProject(id,t,strategy)
+    +previewMerge(id,t)
+    +getProjectSubtree(id)
+    +getProjectChildren(pid)
+  }
+  class simpleServer {
+    +POST /projects/:id/merge
+    +GET /projects/:id/merge-preview
+    +GET /projects/:id/subtree
+    +GET /projects?parentId=
+  }
+  class AccessControl {
+    +visibleProjects()
+    +canMergeProject()
+  }
+  class hierarchy {
+    +getLevel()
+    +collectSubtree()
+    +getChildren()
+    +wouldCreateCycle()
+  }
+
+  useProjectStore ..> apiClient : 调用
+  apiClient ..> simpleServer : HTTP
+  simpleServer ..> hierarchy : 复用
+  simpleServer ..> AccessControl : 鉴权
+  useProjectStore ..> hierarchy : 复用

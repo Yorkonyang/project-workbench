@@ -1,0 +1,59 @@
+%% 关键路径时序图 — 多级子项目与项目合并
+
+%% ===== 5.1 新建子项目 =====
+sequenceDiagram
+  participant U as 用户
+  participant PC as ProjectCard / ProjectDetailPage
+  participant PF as ProjectForm
+  participant PS as useProjectStore
+  participant AC as apiClient
+  participant S as simple-server
+  participant DB as workbench.db
+
+  U->>PC: 点击「＋子项目」(parentId=当前项目)
+  PC->>PF: 打开 ProjectForm({ parentProjectId, isSubProject:true })
+  PF->>PF: parentLevel = getProjectLevel(parent)
+  PF->>PF: 预置 code=formatHierarchyCode(parent.code)<br/>继承 manager/color/startDate/endDate
+  PF->>PF: 校验 parentLevel < MAX_DEPTH（否则禁用提交）
+  U->>PF: 填写名称并保存
+  PF->>PS: addProject(formData)  // 含 parentProjectId
+  PS->>AC: createProject(data)
+  AC->>S: POST /api/projects
+  S->>DB: 写入 project(parentProjectId=parent)
+  S-->>AC: 201 project
+  AC-->>PS: project
+  PS-->>PC: 更新 projects[]
+  PC->>PC: 用 getChildren 重建树，渲染新子项目行
+
+%% ===== 5.2 合并项目（预览 → 强确认 → 原子执行） =====
+sequenceDiagram
+  participant U as 用户
+  participant PD as ProjectDetailPage
+  participant MD as MergeDialog
+  participant PV as MergePreview
+  participant PS as useProjectStore
+  participant AC as apiClient
+  participant S as simple-server
+  participant DB as workbench.db
+
+  U->>PD: 点击「合并到…」
+  PD->>MD: 打开 MergeDialog(sourceId)
+  MD->>PS: getMergeCandidates(sourceId)
+  PS-->>MD: 候选目标（排除自身/子孙/已归档/已合并）
+  U->>MD: 选择目标 + 策略(keep/flatten)
+  MD->>AC: previewMerge(sourceId, targetId, strategy)
+  AC->>S: GET /api/projects/:id/merge-preview?targetId=
+  S->>DB: 计算移动计数 + 冲突标志(环/深度/code)
+  S-->>AC: { counts, cycle, depthExceeded, codeCollision, childProjects }
+  AC-->>PV: 预览结果
+  PV-->>U: 展示影响范围 + 高危确认
+  U->>MD: 确认合并
+  MD->>PS: mergeProject(sourceId, targetId, strategy)
+  PS->>AC: mergeProject(...)
+  AC->>S: POST /api/projects/:id/merge
+  S->>S: 校验(非自身/非子孙/非归档/未合并)
+  S->>DB: 原子：源直属实体 projectId→target；<br/>源子项目 parentProjectId→target(或拍平)；<br/>源置 mergedInto/target/mergedAt
+  S-->>AC: { success, movedCounts }
+  AC-->>PS: 结果
+  PS->>PS: refetchProjects + refetch 各实体 store
+  PS-->>PD: 跳转/刷新到目标项目详情
