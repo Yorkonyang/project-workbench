@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Plus, Archive, RotateCcw, FileText, X, ChevronRight, ChevronDown, Edit2, Trash2, ExternalLink, Calendar, User } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { Plus, Archive, RotateCcw, FileText, X, ChevronRight, ChevronDown, Edit2, Trash2, ExternalLink, Calendar, User, Search, GripVertical } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Button from '@/components/ui/Button';
 import ProjectForm from '@/components/projects/ProjectForm';
@@ -12,7 +12,7 @@ import { useMemberStore } from '@/store/useMemberStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useTodoStore } from '@/store/useTodoStore';
-import { getChildren, collectSubtree, getProjectLevel, MAX_DEPTH } from '@/lib/hierarchy';
+import { getChildren, collectSubtree, getProjectLevel, getAncestors, MAX_DEPTH } from '@/lib/hierarchy';
 import { cn, isOverdue, dueDateLabel, getProjectStatusConfig, formatDate } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
 import TaskProgressModal from '@/components/tasks/TaskProgressModal';
@@ -87,10 +87,30 @@ export default function ProjectsPage() {
     return map;
   }, [todos]);
 
-  // 默认展开所有项目（任务层可见），待办层默认收起
-  const [expandedProjects, setExpandedProjects] = useState({});
-  const [expandedTasks, setExpandedTasks] = useState({});
+  // T14 折叠记忆：展开状态持久化到 localStorage，刷新后恢复
+  // 语义保留：未记录的节点默认展开（=== false 才折叠）
+  const EXPAND_KEY = 'projects_tree_expanded_v1';
+  const loadExpanded = (k) => {
+    try {
+      const raw = localStorage.getItem(EXPAND_KEY);
+      const saved = raw ? JSON.parse(raw) : null;
+      return saved?.[k] || {};
+    } catch {
+      return {};
+    }
+  };
+  const [expandedProjects, setExpandedProjects] = useState(() => loadExpanded('projects'));
+  const [expandedTasks, setExpandedTasks] = useState(() => loadExpanded('tasks'));
+  useEffect(() => {
+    try {
+      localStorage.setItem(EXPAND_KEY, JSON.stringify({ projects: expandedProjects, tasks: expandedTasks }));
+    } catch { /* 忽略配额/隐私模式错误 */ }
+  }, [expandedProjects, expandedTasks]);
   const [editingTask, setEditingTask] = useState(null);
+  // T14 跨层级全局搜索（带层级标注）
+  const [globalSearch, setGlobalSearch] = useState('');
+  const [dragProjectId, setDragProjectId] = useState(null);
+  const [dragOverProjectId, setDragOverProjectId] = useState(null);
 
   const toggleTodo = useTodoStore((s) => s.toggleTodo);
 
@@ -118,19 +138,120 @@ export default function ProjectsPage() {
 
   const filteredArchived = archivedProjects;
 
+  // T14 跨层级全局搜索：按 名称/编号/负责人 模糊匹配（不限层级），
+  // 命中的项目 + 其全部祖先 都纳入展示并强制展开，便于在树中定位
+  const globalSearchTrim = globalSearch.trim().toLowerCase();
+  const globalMatchIds = useMemo(() => {
+    if (!globalSearchTrim) return null;
+    const matched = activeProjects.filter((p) => {
+      const ownerName = members.find((m) => m.id === p.ownerId)?.name?.toLowerCase() || '';
+      return (
+        p.name?.toLowerCase().includes(globalSearchTrim) ||
+        p.code?.toLowerCase().includes(globalSearchTrim) ||
+        (ownerName && ownerName.includes(globalSearchTrim))
+      );
+    });
+    const ids = new Set();
+    matched.forEach((p) => {
+      ids.add(p.id);
+      getAncestors(projects, p.id).forEach((a) => ids.add(a.id));
+    });
+    return ids;
+  }, [globalSearchTrim, activeProjects, members, projects]);
+  // 全局搜索命中时，命中项的祖先链默认展开（覆盖折叠记忆）
+  const globalExpandIds = useMemo(() => {
+    if (!globalMatchIds) return null;
+    const expand = new Set();
+    activeProjects.forEach((p) => {
+      getAncestors(projects, p.id).forEach((a) => expand.add(a.id));
+    });
+    return expand;
+  }, [globalMatchIds, activeProjects, projects]);
+
+  // 有效展示集合：全局搜索 > 子树下拉 > 全部活跃
+  const visibleProjects = globalMatchIds
+    ? activeProjects.filter((p) => globalMatchIds.has(p.id))
+    : filteredActive;
+
+  // 拖拽改挂：把项目拖到另一项目上，改挂为其子项目（仅改 parentProjectId，实体归属不变）
+  const handleDragStart = (e, project) => {
+    e.dataTransfer.setData('text/plain', project.id);
+    e.dataTransfer.effectAllowed = 'move';
+    setDragProjectId(project.id);
+  };
+  const handleDragOver = (e, project) => {
+    e.preventDefault();
+    if (dragProjectId && dragProjectId !== project.id) {
+      e.dataTransfer.dropEffect = 'move';
+      setDragOverProjectId(project.id);
+    }
+  };
+  const handleDragLeave = () => setDragOverProjectId(null);
+  const handleDropOnProject = async (e, targetProject) => {
+    e.preventDefault();
+    const sourceId = e.dataTransfer.getData('text/plain');
+    setDragOverProjectId(null);
+    setDragProjectId(null);
+    if (!sourceId || sourceId === targetProject.id) return;
+    // 目标不能是源自身或其子孙（防环），且需有管理目标权限
+    if (collectSubtree(projects, sourceId).has(targetProject.id)) {
+      window.alert('不能挂到自身或其子项目下');
+      return;
+    }
+    if (!canManageProject(targetProject)) {
+      window.alert('您没有该项目的管理权限，无法改挂');
+      return;
+    }
+    const source = projects.find((p) => p.id === sourceId);
+    if (!source) return;
+    const ok = window.confirm(`把「${source.name}」挂到「${targetProject.name}」下？\n其任务/待办/文档等实体仍保留在源项目，仅调整父子关系。`);
+    if (!ok) return;
+    try {
+      await updateProject(sourceId, { parentProjectId: targetProject.id });
+      setGlobalSearch('');
+    } catch (err) {
+      window.alert(`改挂失败：${err.message}`);
+    }
+  };
+
   // 递归渲染单个项目节点（主→子→任务→待办 四级树）
   const renderProjectNode = (project, level = 0) => {
     const projectTasks = tasksByProject[project.id] || [];
-    const childProjects = getChildren(projects, project.id);
-    const isProjectExpanded = expandedProjects[project.id] !== false; // 默认展开
+    const rawChildren = getChildren(projects, project.id);
+    // T14：全局搜索时裁掉非命中兄弟分支，树只保留命中路径
+    const childProjects = globalMatchIds
+      ? rawChildren.filter((c) => globalMatchIds.has(c.id))
+      : rawChildren;
+    // T14：全局搜索命中时，命中项的祖先链强制展开（覆盖折叠记忆）
+    const isProjectExpanded = globalMatchIds
+      ? (globalExpandIds?.has(project.id) || expandedProjects[project.id] !== false)
+      : expandedProjects[project.id] !== false; // 默认展开
     const taskTotal = projectTasks.length;
     const taskDone = projectTasks.filter((t) => t.status === 'done').length;
     const progress = taskTotal > 0 ? Math.round((taskDone / taskTotal) * 100) : 0;
     const canAddSub = canManageProject(project) && level < MAX_DEPTH;
     const atMaxDepth = level >= MAX_DEPTH;
+    const isDropTarget = dragOverProjectId === project.id && dragProjectId && dragProjectId !== project.id;
+    const isDragSource = dragProjectId === project.id;
+    // T14：全局搜索命中项高亮
+    const isGlobalHit = globalMatchIds && globalMatchIds.has(project.id) && globalSearchTrim;
 
     return (
-      <div key={project.id} className={cn('bg-white rounded-xl border border-slate-200 overflow-hidden', level > 0 && 'mt-2')}>
+      <div
+        key={project.id}
+        draggable={canManageProject(project) && !globalMatchIds}
+        onDragStart={(e) => handleDragStart(e, project)}
+        onDragOver={(e) => handleDragOver(e, project)}
+        onDragLeave={handleDragLeave}
+        onDrop={(e) => handleDropOnProject(e, project)}
+        className={cn(
+          'bg-white rounded-xl border overflow-hidden transition-colors',
+          level > 0 && 'mt-2',
+          isDropTarget ? 'border-primary-400 ring-2 ring-primary-300 bg-primary-50/40' : 'border-slate-200',
+          isDragSource && 'opacity-50',
+          isGlobalHit && 'border-amber-300 ring-1 ring-amber-200'
+        )}
+      >
         {/* ── 项目行（含缩进 + 连接线 + 层级徽标）── */}
         <div
           className="flex items-center gap-2.5 px-4 py-3"
@@ -473,6 +594,16 @@ export default function ProjectsPage() {
             ))}
           </select>
         </div>
+        {/* T14 跨层级全局搜索：按 名称/编号/负责人 模糊匹配，命中项+祖先链展开定位 */}
+        <div className="relative w-full max-w-xs">
+          <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            value={globalSearch}
+            onChange={(e) => setGlobalSearch(e.target.value)}
+            placeholder="跨层级搜索项目（名称/编号/负责人）"
+            className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:border-amber-400 transition-smooth bg-white"
+          />
+        </div>
         {queryProjectId && (
           <button
             onClick={() => setQueryProjectId('')}
@@ -556,9 +687,9 @@ export default function ProjectsPage() {
           ))}
         </div>
       ) : (
-        /* 活跃项目 — 主→子→任务→待办 四级树 */
+        /* 活跃项目 — 主→子→任务→待办 四级树（全局搜索时仅显示命中分支） */
         <div className="space-y-2">
-          {filteredActive
+          {visibleProjects
             .filter((p) => !p.parentProjectId)
             .map((project) => renderProjectNode(project, 0))}
         </div>

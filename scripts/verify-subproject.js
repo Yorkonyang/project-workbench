@@ -190,6 +190,45 @@ async function test5_undoMerge() {
   console.log(`  ✅ 清理父/子项目`);
 }
 
+async function test6_reparentGuard() {
+  console.log('\n📋 测试 6: 拖拽改挂校验（T14，PUT 环检测/深度/父存在）');
+
+  // ── 用例 A：正常改挂（跨级上移合法）+ 环检测（同一棵树 G→H→I）──
+  const G = await request('POST', '/projects', { name: '验证-改挂G', code: 'VRG', stage: '规划中' });
+  const H = await request('POST', '/projects', { name: '验证-改挂H', code: 'VRH', parentProjectId: G.id, stage: '规划中' });
+  const I = await request('POST', '/projects', { name: '验证-改挂I', code: 'VRI', parentProjectId: H.id, stage: '规划中' });
+  // (a) I(孙) 上移到 G(根) 直属：level 不变、合法
+  const okRes = await request('PUT', `/projects/${I.id}`, { parentProjectId: G.id });
+  console.log(`  ✅ 正常改挂 I→G 成功: ${okRes.parentProjectId === G.id}`);
+  // (b) 环检测：G(根) 想挂到 H(是 G 的后代) 下 → 应 409
+  const cycleRes = await request('PUT', `/projects/${G.id}`, { parentProjectId: H.id });
+  console.log(`  ✅ 环检测拦截: ${/环|自身|子项目/.test(cycleRes.error || '') ? cycleRes.error : '未拦截! ' + JSON.stringify(cycleRes)}`);
+  await request('DELETE', `/projects/${G.id}`); // 级联删 H/I
+
+  // ── 用例 B：深度超限（两棵独立树，避免撞环检测）──
+  // 树1 P1(根)→P2(1)→P3(2)→P4(3)：P1 子树深度=3
+  const P1 = await request('POST', '/projects', { name: '验证-深P1', code: 'VRP1', stage: '规划中' });
+  const P2 = await request('POST', '/projects', { name: '验证-深P2', code: 'VRP2', parentProjectId: P1.id, stage: '规划中' });
+  const P3 = await request('POST', '/projects', { name: '验证-深P3', code: 'VRP3', parentProjectId: P2.id, stage: '规划中' });
+  await request('POST', '/projects', { name: '验证-深P4', code: 'VRP4', parentProjectId: P3.id, stage: '规划中' });
+  // 树2 Q1(根)→Q2(1)
+  const Q1 = await request('POST', '/projects', { name: '验证-深Q1', code: 'VRQ1', stage: '规划中' });
+  const Q2 = await request('POST', '/projects', { name: '验证-深Q2', code: 'VRQ2', parentProjectId: Q1.id, stage: '规划中' });
+  // 把 P1(子树深度3) 改挂到 Q2(level1，且 Q2 不是 P1 后代，无环) 下 → 1+1+3=5 > MAX_DEPTH(3) → 409 深度超限
+  const depthRes = await request('PUT', `/projects/${P1.id}`, { parentProjectId: Q2.id });
+  console.log(`  ✅ 深度校验拦截: ${/深度超限/.test(depthRes.error || '') ? depthRes.error : '未拦截! ' + JSON.stringify(depthRes)}`);
+  await request('DELETE', `/projects/${P1.id}`); // 级联删 P2/P3/P4
+  await request('DELETE', `/projects/${Q1.id}`); // 级联删 Q2
+
+  // ── 用例 C：父不存在（独立根 R，干净 404）──
+  const R = await request('POST', '/projects', { name: '验证-改挂R', code: 'VRR', stage: '规划中' });
+  const noPar = await request('PUT', `/projects/${R.id}`, { parentProjectId: 'no-such-parent-id' });
+  console.log(`  ✅ 父不存在拦截: ${/父项目不存在/.test(noPar.error || '') ? noPar.error : '未拦截! ' + JSON.stringify(noPar)}`);
+  await request('DELETE', `/projects/${R.id}`);
+
+  console.log(`  ✅ 清理完成`);
+}
+
 async function main() {
   console.log('=== 子项目功能后端验证 ===\n');
 
@@ -210,6 +249,9 @@ async function main() {
 
     // 测试 5: 合并撤销（T13）
     await test5_undoMerge();
+
+    // 测试 6: 拖拽改挂校验（T14）
+    await test6_reparentGuard();
 
     // 清理临时项目
     await cleanup();

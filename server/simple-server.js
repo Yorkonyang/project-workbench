@@ -834,6 +834,38 @@ const server = http.createServer(async (req, res) => {
                 sendResponse(res, 403, { error: '无权编辑该项目' });
                 return;
             }
+            // T14：改挂（parentProjectId 变更）需过 3 道校验
+            if ('parentProjectId' in body && body.parentProjectId !== data.projects[index].parentProjectId) {
+                const newParent = hierarchy.normalizeParent(body.parentProjectId);
+                // (a) 父存在性优先（资源不存在 → 404，先于 409）
+                if (newParent) {
+                    const par = data.projects.find(p => p.id === newParent);
+                    if (!par) {
+                        sendResponse(res, 404, { error: '父项目不存在' });
+                        return;
+                    }
+                    if (par.archived === 1 || par.mergedInto) {
+                        sendResponse(res, 409, { error: '父项目已归档或已合并' });
+                        return;
+                    }
+                }
+                // (b) 环检测：新父不能是自己或自己的子孙
+                if (hierarchy.wouldCreateCycle(data.projects, id, newParent)) {
+                    sendResponse(res, 409, { error: '不能挂到自身或其子项目下（形成环）' });
+                    return;
+                }
+                // (c) 深度校验：改挂后 新父层级 + 1 + 自身子树深度 不得超过 MAX_DEPTH
+                if (newParent) {
+                    const targetLevel = hierarchy.getLevel(data.projects, newParent);
+                    const subtreeDepth = hierarchy.maxSubtreeDepth(data.projects, id);
+                    if (targetLevel + 1 + subtreeDepth > hierarchy.MAX_DEPTH) {
+                        sendResponse(res, 409, {
+                            error: `深度超限（改挂后最深 ${targetLevel + 1 + subtreeDepth} 层，最大 ${hierarchy.MAX_DEPTH} 层）`,
+                        });
+                        return;
+                    }
+                }
+            }
             data.projects[index] = { ...data.projects[index], ...body, updated_at: new Date().toISOString() };
             saveData(data);
             sendResponse(res, 200, data.projects[index]);
