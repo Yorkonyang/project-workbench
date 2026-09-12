@@ -5,7 +5,7 @@ import { Flag, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isMilestoneDone } from '@/config/theme';
 import { getLevel, getAncestors } from '@/lib/hierarchy';
-import { PROJECT_THEMES, getLevelShade } from '@/lib/projectTheme';
+import { PROJECT_THEMES, getLevelShade, getLightestShade } from '@/lib/projectTheme';
 
 export default function GanttView({ tasks, milestones, projects }) {
   const navigate = useNavigate();
@@ -365,25 +365,22 @@ export default function GanttView({ tasks, milestones, projects }) {
                     .slice()
                     .sort((a, b) => new Date(a.date) - new Date(b.date));
                   const actualLeft = getPosition(actualStart);
-                  // 任务行底色：家族基础色 50 档（浅于主色但深于纯白，避免与白底混淆）
-                  const taskRowBg = getLevelShade(theme, 3);
+                  // 任务行底色：项目内按「第1个=白、第2个=最浅档、第3个=白…」严格交替
+                  // idx 是项目内任务序号（0 起），idx%2===0 → 白；idx%2===1 → 家族最浅档
+                  const taskLightBg = getLightestShade(theme);
+                  const isEvenTask = idx % 2 === 0;
+                  const taskRowBg = isEvenTask ? '#ffffff' : taskLightBg;
 
                   return (
                     <div
                       key={item.id}
                       className="flex hover:bg-opacity-80 transition-smooth"
-                      style={{
-                        height: rowHeight,
-                        backgroundColor: (projectIdx + idx) % 2 === 0 ? '#ffffff' : taskRowBg,
-                      }}
+                      style={{ height: rowHeight, backgroundColor: taskRowBg }}
                     >
                       {/* Task Info - sticky left column */}
                       <div
                         className="shrink-0 px-4 py-2 border-r flex items-center sticky left-0 z-30"
-                        style={{
-                          width: LABEL_W,
-                          backgroundColor: (projectIdx + idx) % 2 === 0 ? '#ffffff' : taskRowBg,
-                        }}
+                        style={{ width: LABEL_W, backgroundColor: taskRowBg }}
                       >
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium text-slate-700 truncate flex items-center gap-1.5">

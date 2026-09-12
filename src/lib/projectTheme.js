@@ -6,19 +6,19 @@
 export const PROJECT_THEMES = [
   {
     rowBg: 'bg-slate-50', border: 'border-slate-200', nameBg: 'bg-slate-400', nameText: 'text-white', accent: 'border-slate-200',
-    levelShades: ['#94a3b8', '#a8b6c8', '#c2ccd9', '#d6dfe9'], // 淡灰：深→浅（档0=原色 slate-400，档3 仍比 slate-50 任务底色深）
+    levelShades: ['#94a3b8', '#aebccb', '#cbd6e3', '#e8eef4'], // 淡灰：档3=#e8eef4（比 slate-50 #f8fafc 略深，可辨但很浅）
   },
   {
     rowBg: 'bg-emerald-50', border: 'border-emerald-200', nameBg: 'bg-emerald-500', nameText: 'text-white', accent: 'border-emerald-200',
-    levelShades: ['#10b981', '#34c38e', '#6fd6ac', '#a8e6cd'], // 淡绿
+    levelShades: ['#10b981', '#5fd9ab', '#a4e9cc', '#ddf6ea'], // 淡绿：档3=#ddf6ea
   },
   {
     rowBg: 'bg-blue-50', border: 'border-blue-200', nameBg: 'bg-blue-500', nameText: 'text-white', accent: 'border-blue-200',
-    levelShades: ['#3b82f6', '#5b93f8', '#85abd8', '#aec9f0'], // 淡蓝
+    levelShades: ['#3b82f6', '#7aa6f9', '#a9c4f4', '#d8e7fc'], // 淡蓝：档3=#d8e7fc
   },
   {
     rowBg: 'bg-amber-50', border: 'border-amber-200', nameBg: 'bg-amber-500', nameText: 'text-white', accent: 'border-amber-200',
-    levelShades: ['#f59e0b', '#f6b13a', '#f8c775', '#fadcab'], // 淡桔（用户举例的主色）
+    levelShades: ['#f59e0b', '#f8c766', '#fadb9b', '#fdf3d9'], // 淡桔：档3=#fdf3d9（比 amber-50 #fffbeb 略深，可辨）
   },
 ];
 
@@ -28,6 +28,11 @@ export function getLevelShade(theme, level) {
   if (!shades || shades.length === 0) return theme?.nameBg;
   const idx = Math.max(0, Math.min(level, shades.length - 1));
   return shades[idx];
+}
+
+// 取某主题的「最浅档」（用于任务行交替底色，与主项目色系同源但比白底色略深）
+export function getLightestShade(theme) {
+  return getLevelShade(theme, (theme?.levelShades || []).length - 1);
 }
 
 export const PROJECT_THEME_COUNT = PROJECT_THEMES.length;
