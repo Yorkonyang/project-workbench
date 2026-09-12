@@ -61,6 +61,18 @@ export default function TimelinePage() {
 
   const inScope = (pid) => (includedProjectIds ? includedProjectIds.has(pid) : true);
 
+  // 项目下拉选项：默认只列主项目（无 parentProjectId 的根项目），勾选「含子项目」后再列出全部子孙
+  // 选项格式统一为「编号 名称」，让项目编号显示在名称前
+  const dropdownProjects = useMemo(() => {
+    const roots = taskVisibleProjects.filter((p) => !p.parentProjectId);
+    if (!includeSub) return roots;
+    return taskVisibleProjects;
+  }, [taskVisibleProjects, includeSub]);
+  const projectOptions = [
+    { value: '', label: '全部项目' },
+    ...dropdownProjects.map((p) => ({ value: p.id, label: `${p.code || ''} ${p.name || ''}`.trim() })),
+  ];
+
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
       const pid = t.projectId || t.project_id;
@@ -125,13 +137,14 @@ export default function TimelinePage() {
         <div className="flex items-center gap-2 flex-wrap">
           <Select
             value={projectFilter}
-            onChange={setProjectFilter}
+            onChange={(v) => {
+              setProjectFilter(v);
+              // 切换项目后重置「含子项目」勾选，避免残留状态
+              setIncludeSub(false);
+            }}
             disabled={isLocked}
-            options={[
-              { value: '', label: '全部项目' },
-              ...taskVisibleProjects.map((p) => ({ value: p.id, label: p.name })),
-            ]}
-            className="w-40"
+            options={projectOptions}
+            className="w-72"
           />
           <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
             <input

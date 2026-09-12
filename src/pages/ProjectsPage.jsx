@@ -126,8 +126,12 @@ export default function ProjectsPage() {
   const archivedProjects = projects.filter((p) => p.archived && !p.mergedInto);
   const pendingArchiveProjects = projects.filter((p) => p.archiveStatus === 'requested' && !p.mergedInto);
 
-  // 下拉查询：仅列出「进行中」项目
-  const inProgressProjects = projects.filter((p) => !p.archived && p.status === 'in_progress');
+  // 下拉查询：列出所有活跃根项目（主项目），选中后连同其子树一起展示
+  // 不限状态（planned/in_progress/completed 均可筛选），避免新建/非进行中的项目被漏掉
+  const rootProjectsForDropdown = useMemo(
+    () => activeProjects.filter((p) => !p.parentProjectId),
+    [activeProjects]
+  );
 
   // 选中项目后，连同其全部下级隶属项目（递归）一起展示（复用层级工具）
   const subtreeIds = queryProjectId ? collectSubtree(projects, queryProjectId) : null;
@@ -589,8 +593,8 @@ export default function ProjectsPage() {
             className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 transition-smooth bg-white"
           >
             <option value="">全部项目</option>
-            {inProgressProjects.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}（{p.code}）</option>
+            {rootProjectsForDropdown.map((p) => (
+              <option key={p.id} value={p.id}>{p.code} {p.name}</option>
             ))}
           </select>
         </div>

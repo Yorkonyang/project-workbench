@@ -4,8 +4,8 @@ import { format, addDays, isSameDay, parseISO, startOfMonth, endOfMonth } from '
 import { Flag, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isMilestoneDone } from '@/config/theme';
-import { buildProjectThemeMap } from '@/lib/projectTheme';
-import { getLevel } from '@/lib/hierarchy';
+import { getLevel, getAncestors } from '@/lib/hierarchy';
+import { PROJECT_THEMES, getLevelShade } from '@/lib/projectTheme';
 
 export default function GanttView({ tasks, milestones, projects }) {
   const navigate = useNavigate();
@@ -29,6 +29,17 @@ export default function GanttView({ tasks, milestones, projects }) {
     });
     return merged;
   }, [filteredTasks, filteredMilestones]);
+
+  // 左侧标签列宽：动态计算，覆盖 编号前缀 + 层级缩进 + 项目/任务名 全显示
+  const LABEL_W = useMemo(() => {
+    const names = [
+      ...(projects || []).map((p) => `${p.code || ''} ${p.name || ''}`),
+      ...filteredTasks.map((t) => t.title || ''),
+      ...filteredMilestones.map((m) => m.title || ''),
+    ];
+    const maxLen = names.reduce((m, s) => Math.max(m, String(s).length), 0);
+    return Math.min(480, Math.max(192, 32 + maxLen * 11)); // 11px/字符(text-sm) + 32px padding
+  }, [projects, filteredTasks, filteredMilestones]);
 
   if (allItems.length === 0) {
     return (
@@ -149,13 +160,16 @@ export default function GanttView({ tasks, milestones, projects }) {
     }
   };
 
-  // Group by project — 按 code 字典序排序，保证与 TaskCard 进行中列填色完全对应
-  const projectThemeMap = useMemo(() => buildProjectThemeMap(projects || []), [projects]);
+  // 分组：先按 projectId 聚合；再补全「选中范围内有项目但无任务/里程碑的空项目」，使空子项目也能显示汇总行
   const groupByProject = useMemo(() => {
     const groups = {};
     allItems.forEach((item) => {
       if (!groups[item.projectId]) groups[item.projectId] = [];
       groups[item.projectId].push(item);
+    });
+    // 把范围内无任务的空项目补进来（items 为空数组），让时间线也能展示子项目
+    (projects || []).forEach((p) => {
+      if (activeProjectIds.has(p.id) && !groups[p.id]) groups[p.id] = [];
     });
     // 按项目编号字典序稳定排序
     const sortedEntries = Object.entries(groups).sort(([idA], [idB]) => {
@@ -164,16 +178,15 @@ export default function GanttView({ tasks, milestones, projects }) {
       return (codeA || '').localeCompare(codeB || '');
     });
     return sortedEntries;
-  }, [allItems, projects]);
+  }, [allItems, projects, activeProjectIds]);
 
   const todayPosition = getPosition(todayISO);
 
-  // 打开页面时把“今天”滚动到可视区中央（任务标签列为 w-48 = 192px，需从可视宽度中扣除）
+  // 打开页面时把“今天”滚动到可视区中央（任务标签列为 LABEL_W 动态宽度，需从可视宽度中扣除）
   const scrollRef = useRef(null);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const LABEL_W = 192;
     const raf = requestAnimationFrame(() => {
       const visibleW = Math.max(0, el.clientWidth - LABEL_W);
       const center = todayPosition + dayWidth / 2 - visibleW / 2;
@@ -181,17 +194,32 @@ export default function GanttView({ tasks, milestones, projects }) {
       el.scrollTo({ left: Math.max(0, Math.min(center, max)), behavior: 'smooth' });
     });
     return () => cancelAnimationFrame(raf);
-  }, [todayPosition, chartStartDate, totalDays, dayWidth]);
+  }, [todayPosition, chartStartDate, totalDays, dayWidth, LABEL_W]);
 
-  // Project color theme mapping: 使用共享主题表（src/lib/projectTheme.js），与 TaskCard 进行中列底色保持完全一致
-  const getProjectTheme = (projectIdx) => {
-    const themes = [
-      { nameBg: 'bg-slate-400', nameText: 'text-white', rowEven: 'bg-white', rowOdd: 'bg-slate-50', accent: 'border-slate-200' },
-      { nameBg: 'bg-emerald-500', nameText: 'text-white', rowEven: 'bg-white', rowOdd: 'bg-emerald-50', accent: 'border-emerald-200' },
-      { nameBg: 'bg-blue-500', nameText: 'text-white', rowEven: 'bg-white', rowOdd: 'bg-blue-50', accent: 'border-blue-200' },
-      { nameBg: 'bg-amber-500', nameText: 'text-white', rowEven: 'bg-white', rowOdd: 'bg-amber-50', accent: 'border-amber-200' },
-    ];
-    return themes[projectIdx % themes.length];
+  // 项目主题：按「主项目家族」共享基础色，子项目在该色基础上逐级变浅。
+  // - 基础色由家族根项目（主项目）的编号字典序轮 4 色决定，保证同一家族主/子同源
+  // - 子项目汇总行底色 = 家族基础色的 levelShades[level]，每级肉眼可辨、最浅档仍深于任务底色
+  const familyThemes = useMemo(() => {
+    const active = (projects || []).filter((p) => !p.archived);
+    const roots = active.filter((p) => !p.parentProjectId);
+    const sortedRoots = [...roots].sort((a, b) => (a.code || '').localeCompare(b.code || ''));
+    // 根项目 id -> 家族基础主题
+    const rootTheme = new Map();
+    sortedRoots.forEach((p, idx) => rootTheme.set(p.id, PROJECT_THEMES[idx % PROJECT_THEMES.length]));
+    // 任意项目 -> 家族基础主题（沿祖先链找到根）
+    const projectThemeMap = new Map();
+    active.forEach((p) => {
+      const chain = getAncestors(projects || [], p.id); // 根 → ... → 直属父
+      const rootId = chain.length > 0 ? chain[0].id : p.id;
+      projectThemeMap.set(p.id, rootTheme.get(rootId) || PROJECT_THEMES[0]);
+    });
+    return projectThemeMap;
+  }, [projects]);
+
+  // 取某项目在某层级的汇总行底色（主项目 level=0 → 基础色；子项目逐级变浅）
+  const getRowBg = (projectId, level) => {
+    const theme = familyThemes.get(projectId) || PROJECT_THEMES[0];
+    return getLevelShade(theme, level);
   };
 
   return (
@@ -232,7 +260,7 @@ export default function GanttView({ tasks, milestones, projects }) {
         <div className="min-w-max">
           {/* Date Header - Month labels */}
           <div className="flex border-b border-slate-100 sticky top-0 bg-white z-20">
-            <div className="w-48 shrink-0 px-4 py-2 text-xs font-medium text-slate-500 bg-slate-50 border-r border-slate-100 sticky left-0 z-30">
+            <div className="shrink-0 px-4 py-2 text-xs font-medium text-slate-500 bg-slate-50 border-r border-slate-100 sticky left-0 z-30" style={{ width: LABEL_W }}>
               任务
             </div>
             <div className="flex-1 flex overflow-hidden">
@@ -250,7 +278,7 @@ export default function GanttView({ tasks, milestones, projects }) {
 
           {/* Day numbers row */}
           <div className="flex border-b border-slate-50">
-            <div className="w-48 shrink-0 bg-slate-50 border-r border-slate-100 sticky left-0 z-10"></div>
+            <div className="shrink-0 bg-slate-50 border-r border-slate-100 sticky left-0 z-10" style={{ width: LABEL_W }}></div>
             <div className="flex-1 flex overflow-hidden">
               {days.map((day, i) => (
                 <div
@@ -270,31 +298,32 @@ export default function GanttView({ tasks, milestones, projects }) {
           {/* Task Rows */}
           <div className="divide-y divide-slate-50">
             {groupByProject.map(([projectId, items], projectIdx) => {
-              const theme = getProjectTheme(projectIdx);
+              const theme = familyThemes.get(projectId) || PROJECT_THEMES[0];
               const curProject = (projects || []).find((p) => p.id === projectId);
               // 层级缩进：每级 8 空格（≈2 个英文字符宽）；子项目比父项目缩进一级，任务与所属项目左对齐
               const level = getLevel(projects || [], projectId);
               const indent = ' '.repeat(level * 8);
               // 项目编号前缀（无编号时不显示）
               const codePrefix = curProject?.code ? `${curProject.code} ` : '';
+              // 家族色阶：主项目 level=0 取基础色，子项目逐级变浅（最浅档仍深于任务底色）
+              const rowBg = getRowBg(projectId, level);
               return (
               <div key={projectId}>
                 {/* Summary Row */}
                 <div
-                  className={cn(
-                    "flex transition-smooth",
-                    theme.nameBg,
-                    theme.nameText
-                  )}
-                  style={{ height: summaryRowHeight }}
+                  className="flex transition-smooth"
+                  style={{ height: summaryRowHeight, backgroundColor: rowBg }}
                 >
-                  <div className={cn("w-48 shrink-0 px-4 py-2 border-r flex items-center sticky left-0 z-30", theme.nameBg, "text-white")}>
+                  <div
+                    className="shrink-0 px-4 py-2 border-r flex items-center sticky left-0 z-30 text-white"
+                    style={{ width: LABEL_W, backgroundColor: rowBg }}
+                  >
                     <p className="text-sm font-medium truncate">
                       <span className="whitespace-pre">{indent}{codePrefix}</span>
                       <span>{curProject?.name || projectId}</span>
                     </p>
                   </div>
-                  <div className="flex-1 relative" style={{ width: totalWidth, height: summaryRowHeight }}>
+                  <div className="flex-1 relative" style={{ width: totalWidth, height: summaryRowHeight, backgroundColor: rowBg }}>
                     {/* Grid Lines */}
                     <div className="absolute inset-0 flex">
                       {days.map((day, i) => (
@@ -336,18 +365,26 @@ export default function GanttView({ tasks, milestones, projects }) {
                     .slice()
                     .sort((a, b) => new Date(a.date) - new Date(b.date));
                   const actualLeft = getPosition(actualStart);
+                  // 任务行底色：家族基础色 50 档（浅于主色但深于纯白，避免与白底混淆）
+                  const taskRowBg = getLevelShade(theme, 3);
 
                   return (
                     <div
                       key={item.id}
-                      className={cn(
-                        "flex hover:bg-opacity-80 transition-smooth",
-                        (projectIdx + idx) % 2 === 0 ? theme.rowEven : theme.rowOdd
-                      )}
-                      style={{ height: rowHeight }}
+                      className="flex hover:bg-opacity-80 transition-smooth"
+                      style={{
+                        height: rowHeight,
+                        backgroundColor: (projectIdx + idx) % 2 === 0 ? '#ffffff' : taskRowBg,
+                      }}
                     >
                       {/* Task Info - sticky left column */}
-                      <div className={cn("w-48 shrink-0 px-4 py-2 border-r flex items-center sticky left-0 z-30", theme.rowEven)}>
+                      <div
+                        className="shrink-0 px-4 py-2 border-r flex items-center sticky left-0 z-30"
+                        style={{
+                          width: LABEL_W,
+                          backgroundColor: (projectIdx + idx) % 2 === 0 ? '#ffffff' : taskRowBg,
+                        }}
+                      >
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium text-slate-700 truncate flex items-center gap-1.5">
                             <span className="whitespace-pre shrink-0">{indent}</span>

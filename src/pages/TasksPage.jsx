@@ -88,6 +88,19 @@ export default function TasksPage() {
     return ids;
   }, [projectFilter, includeSub, projects]);
 
+  // 项目下拉选项：默认只列主项目（根项目）；勾选「含子项目」后扩展为选中项目的全部子孙
+  // 项目下拉选项：默认只列主项目（根项目）；勾选「含子项目」后扩展为选中项目的全部子孙
+  const dropdownProjects = useMemo(() => {
+    const base = projects.filter((p) => !p.archived && canViewProjectTasks(p));
+    if (!includeSub || !projectFilter) return base;
+    const ids = new Set([projectFilter, ...getDescendants(projects, projectFilter).map((d) => d.id)]);
+    return base.filter((p) => ids.has(p.id));
+  }, [projects, canViewProjectTasks, includeSub, projectFilter]);
+  const projectOptions = [
+    { value: '', label: '全部项目' },
+    ...dropdownProjects.map((p) => ({ value: p.id, label: `${p.code || ''} ${p.name || ''}`.trim() })),
+  ];
+
   const filteredTasks = activeTasks.filter((t) => {
     const pid = t.projectId || t.project_id;
     if (includedProjectIds && !includedProjectIds.has(pid)) return false;
@@ -151,11 +164,8 @@ export default function TasksPage() {
           <Select
             value={projectFilter}
             onChange={setProjectFilter}
-            options={[
-              { value: '', label: '全部项目' },
-              ...projects.filter((p) => !p.archived && canViewProjectTasks(p)).map((p) => ({ value: p.id, label: p.name })),
-            ]}
-            className="w-36"
+            options={projectOptions}
+            className="w-72"
           />
           <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
             <input
