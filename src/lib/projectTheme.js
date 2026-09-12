@@ -6,19 +6,23 @@
 export const PROJECT_THEMES = [
   {
     rowBg: 'bg-slate-50', border: 'border-slate-200', nameBg: 'bg-slate-400', nameText: 'text-white', accent: 'border-slate-200',
-    levelShades: ['#94a3b8', '#aebccb', '#cbd6e3', '#e8eef4'], // 淡灰：档3=#e8eef4（比 slate-50 #f8fafc 略深，可辨但很浅）
+    // 淡灰：档0=主色，档1/档2 加深（更深一档），档3=原档2 深度（#ccd7e4）
+    levelShades: ['#94a3b8', '#8496a8', '#a5b6c8', '#ccd7e4'],
   },
   {
     rowBg: 'bg-emerald-50', border: 'border-emerald-200', nameBg: 'bg-emerald-500', nameText: 'text-white', accent: 'border-emerald-200',
-    levelShades: ['#10b981', '#5fd9ab', '#a4e9cc', '#ddf6ea'], // 淡绿：档3=#ddf6ea
+    // 淡绿：档1/档2 加深，档3=原档2 深度（#a4e9cc）
+    levelShades: ['#10b981', '#0ea072', '#34c38e', '#a4e9cc'],
   },
   {
     rowBg: 'bg-blue-50', border: 'border-blue-200', nameBg: 'bg-blue-500', nameText: 'text-white', accent: 'border-blue-200',
-    levelShades: ['#3b82f6', '#7aa6f9', '#a9c4f4', '#d8e7fc'], // 淡蓝：档3=#d8e7fc
+    // 淡蓝：档1/档2 加深，档3=原档2 深度（#a9c4f4）
+    levelShades: ['#3b82f6', '#2f74ec', '#5b93f8', '#a9c4f4'],
   },
   {
     rowBg: 'bg-amber-50', border: 'border-amber-200', nameBg: 'bg-amber-500', nameText: 'text-white', accent: 'border-amber-200',
-    levelShades: ['#f59e0b', '#f8c766', '#fadb9b', '#fdf3d9'], // 淡桔：档3=#fdf3d9（比 amber-50 #fffbeb 略深，可辨）
+    // 淡桔：档1/档2 加深，档3=原档2 深度（#f8c766）
+    levelShades: ['#f59e0b', '#f69a08', '#f8b13a', '#f8c766'],
   },
 ];
 
@@ -30,9 +34,24 @@ export function getLevelShade(theme, level) {
   return shades[idx];
 }
 
-// 取某主题的「最浅档」（用于任务行交替底色，与主项目色系同源但比白底色略深）
+// 取某主题的「最浅档」（档3）
 export function getLightestShade(theme) {
   return getLevelShade(theme, (theme?.levelShades || []).length - 1);
+}
+
+// 偶数行任务底色：白 → 家族最浅档 的 30% 混合（浅于最浅档，与白底仍有可辨区分）
+export function getTaskAltBg(theme) {
+  const target = parseHex(getLightestShade(theme));
+  const [r, g, b] = target;
+  const mix = (ch) => Math.round(255 + (ch - 255) * 0.3);
+  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
+}
+
+function parseHex(hex) {
+  const h = (hex || '').replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const n = parseInt(full || 'ffffff', 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
 export const PROJECT_THEME_COUNT = PROJECT_THEMES.length;

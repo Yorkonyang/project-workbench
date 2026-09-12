@@ -5,7 +5,7 @@ import { Flag, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isMilestoneDone } from '@/config/theme';
 import { getLevel, getAncestors } from '@/lib/hierarchy';
-import { PROJECT_THEMES, getLevelShade, getLightestShade } from '@/lib/projectTheme';
+import { PROJECT_THEMES, getLevelShade, getTaskAltBg } from '@/lib/projectTheme';
 
 export default function GanttView({ tasks, milestones, projects }) {
   const navigate = useNavigate();
@@ -365,11 +365,11 @@ export default function GanttView({ tasks, milestones, projects }) {
                     .slice()
                     .sort((a, b) => new Date(a.date) - new Date(b.date));
                   const actualLeft = getPosition(actualStart);
-                  // 任务行底色：项目内按「第1个=白、第2个=最浅档、第3个=白…」严格交替
-                  // idx 是项目内任务序号（0 起），idx%2===0 → 白；idx%2===1 → 家族最浅档
-                  const taskLightBg = getLightestShade(theme);
+                  // 任务行底色：项目内按「第1个=白、第2个=最浅档30%深度、第3个=白…」严格交替
+                  // 偶数行用 白→家族最浅档 的 30% 混合，比之前最浅档更浅，与白底仍有可辨区分
+                  const taskAltBg = getTaskAltBg(theme);
                   const isEvenTask = idx % 2 === 0;
-                  const taskRowBg = isEvenTask ? '#ffffff' : taskLightBg;
+                  const taskRowBg = isEvenTask ? '#ffffff' : taskAltBg;
 
                   return (
                     <div
