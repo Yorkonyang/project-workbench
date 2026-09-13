@@ -7,6 +7,12 @@ import { isMilestoneDone } from '@/config/theme';
 import { getLevel, getAncestors } from '@/lib/hierarchy';
 import { PROJECT_THEMES, getLevelShade, getTaskAltBg } from '@/lib/projectTheme';
 
+// 标题文字色：第三、四级子项目（level>=2）底色偏浅，用黑字便于查看；
+// 主项目与第一、二级子项目底色较深，仍用白字。
+function textColorForLevel(level) {
+  return level >= 2 ? '#000000' : '#ffffff';
+}
+
 export default function GanttView({ tasks, milestones, projects }) {
   const navigate = useNavigate();
   // Merge tasks and milestones with unified date fields
@@ -307,6 +313,8 @@ export default function GanttView({ tasks, milestones, projects }) {
               const codePrefix = curProject?.code ? `${curProject.code} ` : '';
               // 家族色阶：主项目 level=0 取基础色，子项目逐级变浅（最浅档仍深于任务底色）
               const rowBg = getRowBg(projectId, level);
+              // 标题文字色：第三、四级子项目底色偏浅→黑字，主/一/二级→白字
+              const titleColor = textColorForLevel(level);
               return (
               <div key={projectId}>
                 {/* Summary Row */}
@@ -315,8 +323,8 @@ export default function GanttView({ tasks, milestones, projects }) {
                   style={{ height: summaryRowHeight, backgroundColor: rowBg }}
                 >
                   <div
-                    className="shrink-0 px-4 py-2 border-r flex items-center sticky left-0 z-30 text-white"
-                    style={{ width: LABEL_W, backgroundColor: rowBg }}
+                    className="shrink-0 px-4 py-2 border-r flex items-center sticky left-0 z-30"
+                    style={{ width: LABEL_W, backgroundColor: rowBg, color: titleColor }}
                   >
                     <p className="text-sm font-medium truncate">
                       <span className="whitespace-pre">{indent}{codePrefix}</span>
