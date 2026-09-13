@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>项目工作台 · 一键清除本地缓存</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:#f8fafc; color:#1e293b; padding:40px; }
+  .card { max-width:560px; margin:0 auto; background:#fff; border:1px solid #e2e8f0; border-radius:16px; padding:32px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+  h1 { font-size:20px; margin:0 0 8px; }
+  p { color:#64748b; font-size:14px; line-height:1.7; }
+  .box { background:#f1f5f9; border-radius:10px; padding:14px; font-family:ui-monospace,monospace; font-size:12px; color:#475569; white-space:pre-wrap; word-break:break-all; }
+  button { margin-top:20px; background:#1d4ed8; color:#fff; border:none; border-radius:10px; padding:12px 22px; font-size:14px; cursor:pointer; }
+  button:hover { background:#2563eb; }
+  button:disabled { background:#cbd5e1; cursor:default; }
+  .done { color:#047857; font-weight:600; margin-top:14px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>清除浏览器本地数据缓存</h1>
+    <p>
+      你看到"XM_008.3.1"等已删除/已合并的项目仍显示，是因为浏览器 localStorage 里残留了旧的项目缓存
+      （后端数据已正确，只是前端缓存未刷新）。点击下方按钮可一键清除本地缓存并自动刷新页面，
+      之后时间线将只显示真实存在的项目。
+    </p>
+    <p style="margin-top:14px">将被清除的缓存键（保留登录态 pw_auth 与公共成员表 pw_members）：</p>
+    <div class="box" id="keys">pw_projects, pw_tasks, pw_milestones, pw_documents,
+pw_todos, pw_risks, pw_resources, pw_notifications,
+pw_reminder_config, pw_departments</div>
+    <button id="btn" onclick="clearAll()">一键清除并刷新</button>
+    <div id="msg" class="done" style="display:none">✅ 已清除，正在刷新页面…</div>
+  </div>
+<script>
+  function clearAll() {
+    const KEYS = [
+      'pw_projects','pw_tasks','pw_milestones','pw_documents',
+      'pw_todos','pw_risks','pw_resources','pw_notifications',
+      'pw_reminder_config','pw_departments','pw_initialized'
+    ];
+    let n = 0;
+    KEYS.forEach(k => { if (localStorage.getItem(k) !== null) { localStorage.removeItem(k); n++; } });
+    document.getElementById('btn').disabled = true;
+    document.getElementById('msg').style.display = 'block';
+    document.getElementById('msg').textContent = '✅ 已清除 ' + n + ' 项缓存，正在刷新…';
+    setTimeout(() => location.reload(), 800);
+  }
+</script>
+</body>
+</html>
