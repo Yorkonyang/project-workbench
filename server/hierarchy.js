@@ -21,7 +21,9 @@ function getLevel(projects, id) {
   let level = 0;
   let cur = (projects || []).find((p) => p.id === id);
   const visited = new Set();
-  const limit = MAX_DEPTH + 2;
+  // 环保护仅需「上溯长度不超过项目总数」；不能再施加与 MAX_DEPTH 相关的硬截断，
+  // 否则会导致深层子树（如 L3 节点）的相对深度被错误地少算/多算（改挂深度校验依赖其准确性）。
+  const limit = Math.max(MAX_DEPTH + 2, (projects || []).length);
   while (cur && !visited.has(cur.id)) {
     visited.add(cur.id);
     const parent = normalizeParent(cur.parentProjectId);
@@ -29,7 +31,7 @@ function getLevel(projects, id) {
     cur = (projects || []).find((p) => p.id === parent);
     if (!cur) break;
     level += 1;
-    if (level > limit) break; // 环保护
+    if (level > limit) break; // 仅防数据损坏时的环，正常不会触发
   }
   return level;
 }
