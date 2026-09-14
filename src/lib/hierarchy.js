@@ -5,11 +5,11 @@
  * 约定：
  *  - `parentProjectId` 为 `null` / `""` / `"__root__"` 表示主项目（根，level 0）
  *  - `level` **永不持久化**，任何需要层级深度的地方都调用 `getProjectLevel`
- *  - `MAX_DEPTH` 默认 3：根(level0) + 最多 3 层子孙 = 4 个展示层级
+ *  - `MAX_DEPTH` 默认 4：根(level0) + 最多 4 层子孙 = 5 个展示层级
  *  - 判定「能否再建子项目」：`getProjectLevel(p) < MAX_DEPTH`
  */
 
-export const MAX_DEPTH = 3;
+export const MAX_DEPTH = 4;
 export const ROOT = null;
 
 /** 归一化 parentProjectId：null/''/'__root__' 统一视为根（null） */

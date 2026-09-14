@@ -7,10 +7,10 @@ import { isMilestoneDone } from '@/config/theme';
 import { getLevel, getAncestors } from '@/lib/hierarchy';
 import { PROJECT_THEMES, getLevelShade, getTaskAltBg } from '@/lib/projectTheme';
 
-// 标题文字色：第三、四级子项目（level>=2）底色偏浅，用黑字便于查看；
-// 主项目与第一、二级子项目底色较深，仍用白字。
+// 标题文字色：MAX_DEPTH=4 后共 5 档色阶（L0~L4）。
+// L0~L2 底色较深用白字；L3/L4 底色偏浅用黑字（与之前"第三/四级黑字"一致，现在 L3/L4 正好对应第三/四级）。
 function textColorForLevel(level) {
-  return level >= 2 ? '#000000' : '#ffffff';
+  return level >= 3 ? '#000000' : '#ffffff';
 }
 
 export default function GanttView({ tasks, milestones, projects }) {

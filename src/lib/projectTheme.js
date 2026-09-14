@@ -1,29 +1,29 @@
 // 与时间线甘特图保持一致的 4 色项目主题（淡灰、淡绿、淡蓝、淡桔色循环）
 // 用于 GanttView 行底色、TaskCard 进行中列背景色等所有"按项目编号着色"的地方
 //
-// 家族色阶（levelShades）：主项目取 [0]（最深），子项目按层级依次 [1][2][3] 逐级变浅。
-// 设计原则：肉眼可分辨"主项目最深 → 逐级变浅"，且最浅档（3）仍明显深于任务行底色
-//（白色 / 最浅档 30% 混合），不与任务底色混淆。四档亮度须严格单调递增（最深→最浅）。
+// 家族色阶（levelShades）：主项目取 [0]（最深），子项目按层级依次 [1][2][3][4] 逐级变浅。
+// 设计原则：肉眼可分辨"主项目最深 → 逐级变浅"，且最浅档（4）仍明显深于任务行底色
+//（白色 / 最浅档 30% 混合），不与任务底色混淆。五档亮度须严格单调递增（最深→最浅）。
 export const PROJECT_THEMES = [
   {
     rowBg: 'bg-slate-50', border: 'border-slate-200', nameBg: 'bg-slate-400', nameText: 'text-white', accent: 'border-slate-200',
-    // 淡灰：档0 最深(#64748b) → 档1/档2 中深 → 档3 最浅(#ccd7e4)
-    levelShades: ['#64748b', '#8496a8', '#a5b6c8', '#ccd7e4'],
+    // 淡灰：档0 最深(#64748b) → 档1/2 中深 → 档4 最浅(#e5ecf3)
+    levelShades: ['#64748b', '#8496a8', '#a5b6c8', '#c8d5e2', '#e5ecf3'],
   },
   {
     rowBg: 'bg-emerald-50', border: 'border-emerald-200', nameBg: 'bg-emerald-500', nameText: 'text-white', accent: 'border-emerald-200',
-    // 淡绿：档0 最深(#047857) → 档1/档2 中深 → 档3 最浅(#a4e9cc)
-    levelShades: ['#047857', '#0ea072', '#34c38e', '#a4e9cc'],
+    // 淡绿：档0 最深(#047857) → 档1/2 中深 → 档4 最浅(#c7f3dd)
+    levelShades: ['#047857', '#0ea072', '#34c38e', '#8be3ba', '#c7f3dd'],
   },
   {
     rowBg: 'bg-blue-50', border: 'border-blue-200', nameBg: 'bg-blue-500', nameText: 'text-white', accent: 'border-blue-200',
-    // 淡蓝：档0 最深(#1d4ed8) → 档1/档2 中深 → 档3 最浅(#a9c4f4)
-    levelShades: ['#1d4ed8', '#2f74ec', '#5b93f8', '#a9c4f4'],
+    // 淡蓝：档0 最深(#1d4ed8) → 档1/2 中深 → 档4 最浅(#cfe0fa)
+    levelShades: ['#1d4ed8', '#2f74ec', '#5b93f8', '#a9c4f4', '#cfe0fa'],
   },
   {
     rowBg: 'bg-amber-50', border: 'border-amber-200', nameBg: 'bg-amber-500', nameText: 'text-white', accent: 'border-amber-200',
-    // 淡桔：档0 最深(#d97706) → 档1/档2 中深 → 档3 最浅(#f8c766)
-    levelShades: ['#d97706', '#f69a08', '#f8b13a', '#f8c766'],
+    // 淡桔：档0 最深(#d97706) → 档1/2 中深 → 档4 最浅(#fbdcb0)
+    levelShades: ['#d97706', '#f69a08', '#f8b13a', '#f8c766', '#fbdcb0'],
   },
 ];
 

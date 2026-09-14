@@ -5,7 +5,7 @@
  * 常量 `MAX_DEPTH = 3`、`ROOT = null`。
  */
 
-const MAX_DEPTH = 3;
+const MAX_DEPTH = 4;
 const ROOT = null;
 
 /** 归一化 parentProjectId：null/''/'__root__' 统一视为根（null） */
