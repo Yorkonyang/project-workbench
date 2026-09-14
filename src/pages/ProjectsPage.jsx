@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Plus, Archive, RotateCcw, FileText, X, ChevronRight, ChevronDown, Edit2, Trash2, ExternalLink, Calendar, User, Search, GripVertical } from 'lucide-react';
+import { Plus, Archive, RotateCcw, FileText, X, ChevronRight, ChevronDown, Edit2, Trash2, ExternalLink, Calendar, User, Search } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Button from '@/components/ui/Button';
 import ProjectForm from '@/components/projects/ProjectForm';
@@ -12,7 +12,7 @@ import { useMemberStore } from '@/store/useMemberStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useTodoStore } from '@/store/useTodoStore';
-import { getChildren, collectSubtree, getProjectLevel, getAncestors, MAX_DEPTH } from '@/lib/hierarchy';
+import { getChildren, collectSubtree, getAncestors, MAX_DEPTH } from '@/lib/hierarchy';
 import { cn, isOverdue, dueDateLabel, getProjectStatusConfig, formatDate } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
 import TaskProgressModal from '@/components/tasks/TaskProgressModal';
@@ -109,8 +109,6 @@ export default function ProjectsPage() {
   const [editingTask, setEditingTask] = useState(null);
   // T14 跨层级全局搜索（带层级标注）
   const [globalSearch, setGlobalSearch] = useState('');
-  const [dragProjectId, setDragProjectId] = useState(null);
-  const [dragOverProjectId, setDragOverProjectId] = useState(null);
 
   const toggleTodo = useTodoStore((s) => s.toggleTodo);
 
@@ -177,47 +175,6 @@ export default function ProjectsPage() {
     ? activeProjects.filter((p) => globalMatchIds.has(p.id))
     : filteredActive;
 
-  // 拖拽改挂：把项目拖到另一项目上，改挂为其子项目（仅改 parentProjectId，实体归属不变）
-  const handleDragStart = (e, project) => {
-    e.dataTransfer.setData('text/plain', project.id);
-    e.dataTransfer.effectAllowed = 'move';
-    setDragProjectId(project.id);
-  };
-  const handleDragOver = (e, project) => {
-    e.preventDefault();
-    if (dragProjectId && dragProjectId !== project.id) {
-      e.dataTransfer.dropEffect = 'move';
-      setDragOverProjectId(project.id);
-    }
-  };
-  const handleDragLeave = () => setDragOverProjectId(null);
-  const handleDropOnProject = async (e, targetProject) => {
-    e.preventDefault();
-    const sourceId = e.dataTransfer.getData('text/plain');
-    setDragOverProjectId(null);
-    setDragProjectId(null);
-    if (!sourceId || sourceId === targetProject.id) return;
-    // 目标不能是源自身或其子孙（防环），且需有管理目标权限
-    if (collectSubtree(projects, sourceId).has(targetProject.id)) {
-      window.alert('不能挂到自身或其子项目下');
-      return;
-    }
-    if (!canManageProject(targetProject)) {
-      window.alert('您没有该项目的管理权限，无法改挂');
-      return;
-    }
-    const source = projects.find((p) => p.id === sourceId);
-    if (!source) return;
-    const ok = window.confirm(`把「${source.name}」挂到「${targetProject.name}」下？\n其任务/待办/文档等实体仍保留在源项目，仅调整父子关系。`);
-    if (!ok) return;
-    try {
-      await updateProject(sourceId, { parentProjectId: targetProject.id });
-      setGlobalSearch('');
-    } catch (err) {
-      window.alert(`改挂失败：${err.message}`);
-    }
-  };
-
   // 递归渲染单个项目节点（主→子→任务→待办 四级树）
   const renderProjectNode = (project, level = 0) => {
     const projectTasks = tasksByProject[project.id] || [];
@@ -235,24 +192,16 @@ export default function ProjectsPage() {
     const progress = taskTotal > 0 ? Math.round((taskDone / taskTotal) * 100) : 0;
     const canAddSub = canManageProject(project) && level < MAX_DEPTH;
     const atMaxDepth = level >= MAX_DEPTH;
-    const isDropTarget = dragOverProjectId === project.id && dragProjectId && dragProjectId !== project.id;
-    const isDragSource = dragProjectId === project.id;
     // T14：全局搜索命中项高亮
     const isGlobalHit = globalMatchIds && globalMatchIds.has(project.id) && globalSearchTrim;
 
     return (
       <div
         key={project.id}
-        draggable={canManageProject(project) && !globalMatchIds}
-        onDragStart={(e) => handleDragStart(e, project)}
-        onDragOver={(e) => handleDragOver(e, project)}
-        onDragLeave={handleDragLeave}
-        onDrop={(e) => handleDropOnProject(e, project)}
         className={cn(
           'bg-white rounded-xl border overflow-hidden transition-colors',
           level > 0 && 'mt-2',
-          isDropTarget ? 'border-primary-400 ring-2 ring-primary-300 bg-primary-50/40' : 'border-slate-200',
-          isDragSource && 'opacity-50',
+          'border-slate-200',
           isGlobalHit && 'border-amber-300 ring-1 ring-amber-200'
         )}
       >
