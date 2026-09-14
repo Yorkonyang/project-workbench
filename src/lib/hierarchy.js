@@ -25,9 +25,6 @@ export function getLevel(projects, id) {
   let level = 0;
   let cur = (projects || []).find((p) => p.id === id);
   const visited = new Set();
-  // 环保护仅需「上溯长度不超过项目总数」；不再施加与 MAX_DEPTH 相关的硬截断，
-  // 与后端 server/hierarchy.js 保持一致，保证深层子树的相对深度计算准确（改挂深度校验依赖它）。
-  const limit = Math.max(MAX_DEPTH + 2, (projects || []).length);
   while (cur && !visited.has(cur.id)) {
     visited.add(cur.id);
     const parent = normalizeParent(cur.parentProjectId);
@@ -35,7 +32,8 @@ export function getLevel(projects, id) {
     cur = (projects || []).find((p) => p.id === parent);
     if (!cur) break;
     level += 1;
-    if (level > limit) break; // 仅防数据损坏时的环
+    // 无 MAX_DEPTH 硬截断：环完全由 visited 防住（数据损坏才有自环），
+    // 保证深层子树的相对深度（maxSubtreeDepth）被准确计算，改挂深度校验才正确。
   }
   return level;
 }
