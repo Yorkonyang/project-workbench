@@ -470,5 +470,9 @@ export default function MessagesPage() {
 function previewTextOf(c) {
   const last = c.lastMessage;
   if (!last) return '暂无消息';
-  return `${last.recalled ? '消息已撤回' : `${last.senderName || ''}：${last.content || ''}`}`;
+  if (last.recalled) return '消息已撤回';
+  const hasImage = Array.isArray(last.attachments) && last.attachments.length > 0;
+  // 纯图片消息 content 为空串，此处回退为「[图片]」；图文混排显示「[图片] 文字」
+  const body = last.content ? (hasImage ? `[图片] ${last.content}` : last.content) : (hasImage ? '[图片]' : '');
+  return `${last.senderName || ''}：${body}`;
 }

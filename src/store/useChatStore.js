@@ -35,6 +35,37 @@ function peerKey(peerId, projectId) {
 
 export { peerKey };
 
+/** 读取 File 为 dataURL 字符串（用于 base64 上传，无需后端 multipart） */
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    try {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('图片读取失败'));
+      reader.readAsDataURL(file);
+    } catch {
+      reject(new Error('图片读取失败'));
+    }
+  });
+}
+
+/** 读取图片原始尺寸（失败返回 {}，不影响上传） */
+function readImageSize(dataUrl) {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => resolve({ width: img.naturalWidth || 0, height: img.naturalHeight || 0 });
+      img.onerror = () => resolve({});
+      img.src = dataUrl;
+    } catch {
+      resolve({});
+    }
+  });
+}
+
+// 前端图片预校验阈值（与服务端上限一致，超限直接提示、不发请求）
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
 export const useChatStore = create(
   persist(
     (set, get) => ({
@@ -211,14 +242,28 @@ export const useChatStore = create(
         }
       },
 
+      // ---- 上传图片：前端预校验（类型/体积）→ base64 上传 → 返回服务端 attachment ----
+      uploadChatImage: async (file) => {
+        if (!file) throw new Error('未选择图片');
+        if (!file.type || !file.type.startsWith('image/')) throw new Error('仅支持图片文件');
+        if (file.size > MAX_IMAGE_BYTES) throw new Error('单张图片不能超过 5MB');
+        const dataUrl = await readFileAsDataURL(file);
+        const { width, height } = await readImageSize(dataUrl);
+        const res = await apiClient.uploadChatImage({ data: dataUrl, name: file.name, width, height });
+        if (!res || !res.attachment) throw new Error('图片上传失败');
+        return res.attachment;
+      },
+
       // ---- 发送消息（乐观插入 + 服务端回执去重）----
-      sendMessage: async (projectId, content, mentions = [], replyTo = null) => {
+      sendMessage: async (projectId, content, mentions = [], replyTo = null, attachments = []) => {
         const text = (content || '').trim();
-        if (!text) return null;
+        const atts = Array.isArray(attachments) ? attachments : [];
+        if (!text && atts.length === 0) return null;
         const message = await apiClient.sendChatMessage(projectId, {
           content: text,
           mentions,
           replyToId: replyTo ? replyTo.id : undefined,
+          attachments: atts,
         });
         set((s) => {
           const prev = s.messagesByProject[projectId] || [];
@@ -349,13 +394,15 @@ export const useChatStore = create(
       },
 
       // ---- V2 单聊：发送（乐观插入 + 去重，带 projectId）----
-      sendDirect: async (peerId, content, replyTo = null, projectId = null) => {
+      sendDirect: async (peerId, content, replyTo = null, projectId = null, attachments = []) => {
         const text = (content || '').trim();
-        if (!text) return null;
+        const atts = Array.isArray(attachments) ? attachments : [];
+        if (!text && atts.length === 0) return null;
         const message = await apiClient.sendDirectMessage(peerId, {
           content: text,
           replyToId: replyTo ? replyTo.id : undefined,
           projectId,
+          attachments: atts,
         });
         // 服务端返回的消息带 projectId；优先用消息自带维度定位复合 key
         const mProj = message && message.projectId != null ? message.projectId : projectId;

@@ -81,6 +81,7 @@ export const useNotificationStore = create(
 
       // 删除单个通知
       deleteNotification: async (id) => {
+        const userId = useAuthStore.getState().currentUserId;
         set((state) => ({
           notifications: state.notifications.filter((n) => n.id !== id),
         }));
@@ -88,6 +89,8 @@ export const useNotificationStore = create(
           await apiClient.deleteNotification(id);
         } catch (err) {
           console.error('Failed to delete notification:', err);
+          // 失败时以服务端为准重新拉取，避免"假成功"（本地已删但服务端仍在）
+          await get().refreshNotifications(userId);
         }
       },
 
@@ -101,6 +104,8 @@ export const useNotificationStore = create(
           await apiClient.clearReadNotifications(userId);
         } catch (err) {
           console.error('Failed to clear read notifications:', err);
+          // 失败时恢复为服务端真实状态，避免"假成功"（刷新后通知复活）
+          await get().refreshNotifications(userId);
         }
       },
 
@@ -112,6 +117,8 @@ export const useNotificationStore = create(
           await apiClient.clearAllNotifications(userId);
         } catch (err) {
           console.error('Failed to clear all notifications:', err);
+          // 失败时恢复为服务端真实状态，避免"假成功"
+          await get().refreshNotifications(userId);
         }
       },
 

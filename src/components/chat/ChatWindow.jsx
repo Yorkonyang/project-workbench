@@ -22,6 +22,8 @@ import {
   Loader2,
   AlertCircle,
   Settings,
+  ImagePlus,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { pinyinMatch } from '@/lib/pinyinMatch';
@@ -31,22 +33,27 @@ import { useProjectStore } from '@/store/useProjectStore';
 import { useMemberStore } from '@/store/useMemberStore';
 import { useTaskStore } from '@/store/useTaskStore';
 import EmptyState from '@/components/ui/EmptyState';
-import MessageBubble from '@/components/chat/MessageBubble';
+import MessageBubble, { messageSenderId } from '@/components/chat/MessageBubble';
 
 const GROUP_GAP_MS = 5 * 60 * 1000; // 连续消息分组时间窗
 const MAX_AVATARS = 5;              // 头像堆叠上限
+const MAX_PENDING_IMAGES = 9;       // 单条消息最多图片数（与服务端一致）
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 前端预校验上限（单张 5MB）
 
-/** 把消息列表计算为分组信息：每组首条显示姓名、末条显示时间 */
+/** 把消息列表计算为分组信息：每组首条显示姓名、末条显示时间（按归一化发送者 id 分组） */
 function buildGroups(messages) {
   return messages.map((m, i) => {
     const prev = messages[i - 1];
     const next = messages[i + 1];
     const gapPrev = prev ? new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() : Infinity;
     const gapNext = next ? new Date(next.createdAt).getTime() - new Date(m.createdAt).getTime() : Infinity;
+    const prevSender = prev ? messageSenderId(prev) : null;
+    const nextSender = next ? messageSenderId(next) : null;
+    const sender = messageSenderId(m);
     return {
       message: m,
-      showSender: !prev || prev.senderId !== m.senderId || gapPrev > GROUP_GAP_MS,
-      showTime: !next || next.senderId !== m.senderId || gapNext > GROUP_GAP_MS,
+      showSender: !prev || prevSender !== sender || gapPrev > GROUP_GAP_MS,
+      showTime: !next || nextSender !== sender || gapNext > GROUP_GAP_MS,
     };
   });
 }
@@ -83,6 +90,7 @@ export default function ChatWindow({ mode = 'project', projectId, peerId, peerPr
   const sendMessage = useChatStore((s) => (isDirect ? s.sendDirect : s.sendMessage));
   const recallMessage = useChatStore((s) => (isDirect ? s.recallDirect : s.recallMessage));
   const setSetting = useChatStore((s) => s.setSetting);
+  const uploadChatImage = useChatStore((s) => s.uploadChatImage);
 
   // 单聊对方详情（来自成员库，实时取姓名/头像色）
   const peer = useMemberStore((s) => (isDirect ? s.members.find((m) => m.id === peerId) : undefined));
@@ -98,12 +106,18 @@ export default function ChatWindow({ mode = 'project', projectId, peerId, peerPr
   const [newHint, setNewHint] = useState(0);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
+  // 待发送图片附件：{ id, file, previewUrl, status:'pending'|'uploading'|'done'|'error', attachment }
+  const [pendingImages, setPendingImages] = useState([]);
+  const [dragging, setDragging] = useState(false);
 
   const scrollRef = useRef(null);
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
   const atBottomRef = useRef(true);
   const prevLenRef = useRef(0);
+  const fileInputRef = useRef(null);
+  const pendingImagesRef = useRef(pendingImages);
+  pendingImagesRef.current = pendingImages;
 
   // 群成员：owner + manager + projectIds 命中 + 任务 assignee（仅 project 模式）
   const chatMembers = useMemo(() => {
@@ -193,6 +207,89 @@ export default function ChatWindow({ mode = 'project', projectId, peerId, peerPr
 
   useEffect(() => { adjustTextarea(); }, [input, adjustTextarea]);
 
+  // 卸载时回收未发送图片的 objectURL，避免内存泄漏
+  useEffect(
+    () => () => {
+      pendingImagesRef.current.forEach((p) => { if (p.previewUrl) URL.revokeObjectURL(p.previewUrl); });
+    },
+    []
+  );
+
+  /**
+   * 把 File/Blob 列表加入待发送附件（前端预校验类型与体积，超限/非法直接提示、不发请求）。
+   * @param {FileList|File[]} fileList
+   */
+  const addImages = useCallback((fileList) => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    const accepted = [];
+    let invalidMsg = null;
+    for (const f of files) {
+      if (!f.type || !f.type.startsWith('image/')) { invalidMsg = '仅支持图片文件'; continue; }
+      if (f.size > MAX_IMAGE_BYTES) { invalidMsg = '单张图片不能超过 5MB'; continue; }
+      accepted.push(f);
+    }
+    if (accepted.length === 0) {
+      if (invalidMsg) setError(invalidMsg);
+      return;
+    }
+    const room = MAX_PENDING_IMAGES - pendingImagesRef.current.length;
+    if (room <= 0) {
+      setError('单条消息最多 9 张图片');
+      return;
+    }
+    const items = accepted.slice(0, room).map((f) => ({
+      id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      file: f,
+      previewUrl: URL.createObjectURL(f),
+      status: 'pending',
+      attachment: null,
+    }));
+    setPendingImages((prev) => [...prev, ...items]);
+    setError(accepted.length > room ? '单条消息最多 9 张图片' : null);
+  }, []);
+
+  const removePendingImage = useCallback((id) => {
+    setPendingImages((prev) => {
+      const target = prev.find((p) => p.id === id);
+      if (target && target.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((p) => p.id !== id);
+    });
+  }, []);
+
+  // 粘贴图片：仅当剪贴板含图片时拦截默认行为（避免把图片当文本插入），文本粘贴不受影响
+  const handlePaste = (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    const files = [];
+    for (const it of items) {
+      if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      addImages(files);
+    }
+  };
+
+  // 拖拽图片到消息区（增强项）
+  const handleDragOver = (e) => {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+      e.preventDefault();
+      setDragging(true);
+    }
+  };
+  const handleDragLeave = () => setDragging(false);
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      addImages(e.dataTransfer.files);
+    }
+  };
+
   // 关闭设置下拉：点击空白处
   useEffect(() => {
     if (!showSettings) return undefined;
@@ -236,20 +333,45 @@ export default function ChatWindow({ mode = 'project', projectId, peerId, peerPr
 
   const doSend = async () => {
     const content = input.trim();
-    if (!content || sending) return;
+    const pending = pendingImages;
+    if ((!content && pending.length === 0) || sending) return;
     setSending(true);
     setError(null);
     try {
+      // 1) 先并发上传全部待发图片
+      let attachments = [];
+      if (pending.length > 0) {
+        setPendingImages((prev) => prev.map((p) => ({ ...p, status: 'uploading' })));
+        const settled = await Promise.allSettled(pending.map((p) => uploadChatImage(p.file)));
+        attachments = settled
+          .filter((r) => r.status === 'fulfilled' && r.value)
+          .map((r) => r.value);
+        // 标记每张上传结果状态（成功 done / 失败 error）
+        setPendingImages((prev) =>
+          prev.map((p, i) => ({ ...p, status: settled[i] && settled[i].status === 'fulfilled' ? 'done' : 'error' }))
+        );
+        if (attachments.length === 0) {
+          // 全部失败：保留待发条 + 明确报错，不静默失败
+          const firstErr = settled.find((r) => r.status === 'rejected');
+          throw new Error((firstErr && firstErr.reason && firstErr.reason.message) || '图片上传失败，请重试');
+        }
+      }
+
+      // 2) 再发送（文字与图片可同时发；纯图片 content 为空字符串）
       if (isDirect) {
         // 单聊发送带项目维度（在哪个项目下）
-        // 注意：direct 模式下 sendMessage 即 sendDirect，签名 (peerId, content, replyTo, projectId)
-        await sendMessage(peerId, content, replyTo, peerProjectId);
+        // 注意：direct 模式下 sendMessage 即 sendDirect，签名 (peerId, content, replyTo, projectId, attachments)
+        await sendMessage(peerId, content, replyTo, peerProjectId, attachments);
       } else {
         // 仅保留仍存在的成员 id
         const validIds = new Set(chatMembers.map((m) => m.id));
         const mentions = pendingMentions.filter((id) => validIds.has(id));
-        await sendMessage(projectId, content, mentions, replyTo);
+        await sendMessage(projectId, content, mentions, replyTo, attachments);
       }
+
+      // 3) 清理已发送的待发附件
+      pending.forEach((p) => { if (p.previewUrl) URL.revokeObjectURL(p.previewUrl); });
+      setPendingImages([]);
       setInput('');
       setReplyTo(null);
       setPendingMentions([]);
@@ -410,7 +532,12 @@ export default function ChatWindow({ mode = 'project', projectId, peerId, peerPr
       </div>
 
       {/* 消息区 */}
-      <div className="relative flex-1 min-h-0">
+      <div
+        className="relative flex-1 min-h-0"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         <div ref={scrollRef} onScroll={handleScroll} className="h-full overflow-y-auto py-3">
           {loading && messages.length === 0 ? (
             <div className="flex items-center justify-center gap-2 py-10 text-slate-400 text-sm">
@@ -438,7 +565,7 @@ export default function ChatWindow({ mode = 'project', projectId, peerId, peerPr
                   <MessageBubble
                     key={g.message.id}
                     message={g.message}
-                    isMine={g.message.senderId === currentUserId}
+                    isMine={currentUserId != null && messageSenderId(g.message) === String(currentUserId)}
                     showSender={g.showSender}
                     showTime={g.showTime}
                     members={isDirect ? (peer ? [peer] : []) : chatMembers}
@@ -463,6 +590,13 @@ export default function ChatWindow({ mode = 'project', projectId, peerId, peerPr
             <ArrowDown className="w-3.5 h-3.5" />
             有新消息
           </button>
+        ) : null}
+
+        {/* 拖拽图片遮罩 */}
+        {dragging ? (
+          <div className="absolute inset-2 z-30 flex items-center justify-center rounded-xl border-2 border-dashed border-primary-400 bg-primary-50/80 text-primary-600 text-sm font-medium pointer-events-none">
+            松开以添加图片
+          </div>
         ) : null}
       </div>
 
@@ -494,6 +628,35 @@ export default function ChatWindow({ mode = 'project', projectId, peerId, peerPr
           </div>
         ) : null}
 
+        {/* 待发送图片预览条 */}
+        {pendingImages.length > 0 ? (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {pendingImages.map((p) => (
+              <div key={p.id} className="relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200 bg-slate-50">
+                <img src={p.previewUrl} alt={p.file?.name || '待发送图片'} className="w-full h-full object-cover" />
+                {p.status === 'uploading' ? (
+                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                    <Loader2 className="w-4 h-4 text-white animate-spin" />
+                  </div>
+                ) : null}
+                {p.status === 'error' ? (
+                  <div className="absolute inset-0 bg-red-500/60 flex items-center justify-center text-white text-[10px] font-medium">
+                    上传失败
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => removePendingImage(p.id)}
+                  className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 transition-smooth"
+                  title="移除"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         <div className="relative">
           {/* 提及下拉（仅 project 模式） */}
           {!isDirect && mentionQuery !== null && mentionCandidates.length > 0 ? (
@@ -521,11 +684,30 @@ export default function ChatWindow({ mode = 'project', projectId, peerId, peerPr
           ) : null}
 
           <div className="flex items-end gap-2">
+            {/* 隐藏文件选择器 + 图片按钮 */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => { addImages(e.target.files); e.target.value = ''; }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current && fileInputRef.current.click()}
+              disabled={sending}
+              className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-primary-600 hover:bg-slate-100 disabled:opacity-50 transition-smooth"
+              title="发送图片（也可直接粘贴或拖拽图片）"
+            >
+              <ImagePlus className="w-5 h-5" />
+            </button>
             <textarea
               ref={textareaRef}
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               rows={1}
               placeholder={isDirect ? '发送私聊消息，Enter 发送，Shift+Enter 换行' : '输入消息，Enter 发送，Shift+Enter 换行'}
               className="flex-1 resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 leading-5 max-h-[116px] focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400"
@@ -533,7 +715,7 @@ export default function ChatWindow({ mode = 'project', projectId, peerId, peerPr
             <button
               type="button"
               onClick={doSend}
-              disabled={!input.trim() || sending}
+              disabled={(!input.trim() && pendingImages.length === 0) || sending}
               className="shrink-0 inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-primary-500 text-white text-sm font-medium hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-smooth"
             >
               {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}

@@ -585,11 +585,19 @@ class ApiClient {
         return this.request(`/chat/projects/${encodeURIComponent(projectId)}/messages${qs ? `?${qs}` : ''}`);
     }
 
-    // 发送消息：body { content, mentions, replyToId }；返回新消息对象
-    async sendChatMessage(projectId, { content, mentions, replyToId } = {}) {
+    // 发送消息：body { content, mentions, replyToId, attachments }；返回新消息对象
+    async sendChatMessage(projectId, { content, mentions, replyToId, attachments } = {}) {
         return this.request(`/chat/projects/${encodeURIComponent(projectId)}/messages`, {
             method: 'POST',
-            body: JSON.stringify({ content, mentions, replyToId }),
+            body: JSON.stringify({ content, mentions, replyToId, attachments }),
+        });
+    }
+
+    // 上传图片（base64，可带 dataURL 前缀）；返回 { attachment: { id, type, url, name, size, mime, width, height } }
+    async uploadChatImage({ data, name, width, height } = {}) {
+        return this.request('/chat/uploads', {
+            method: 'POST',
+            body: JSON.stringify({ data, name, width, height }),
         });
     }
 
@@ -634,12 +642,12 @@ class ApiClient {
         return this.request(`/chat/directs/${encodeURIComponent(peerId)}/messages${qs ? `?${qs}` : ''}`);
     }
 
-    // 发送单聊消息：body { content, replyToId, projectId }；projectId 必填（项目隔离维度）
+    // 发送单聊消息：body { content, replyToId, projectId, attachments }；projectId 必填（项目隔离维度）
     // 返回新消息对象（自动带 projectId）
-    async sendDirectMessage(peerId, { content, replyToId, projectId } = {}) {
+    async sendDirectMessage(peerId, { content, replyToId, projectId, attachments } = {}) {
         return this.request(`/chat/directs/${encodeURIComponent(peerId)}/messages`, {
             method: 'POST',
-            body: JSON.stringify({ content, replyToId, projectId }),
+            body: JSON.stringify({ content, replyToId, projectId, attachments }),
         });
     }
 

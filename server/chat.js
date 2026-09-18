@@ -35,8 +35,18 @@
  * ============================================================================
  */
 
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
 const CHAT_PREFIX = '/api/chat';
 const MAX_CONTENT_LENGTH = 2000;      // 单条消息最大长度
+const MAX_ATTACHMENTS = 9;            // 单条消息最多图片数（超出截断保留前 9 张）
+const MAX_UPLOAD_B64_LENGTH = 6 * 1024 * 1024; // 上传端点 base64 字符串上限（约合 4.5MB 原图）
+const MAX_UPLOAD_BODY = 7 * 1024 * 1024;        // 上传端点 HTTP body 上限（含 JSON 包裹开销）
+const UPLOAD_URL_PREFIX = '/api/chat/uploads';  // 站内图片相对路径前缀
+const UPLOAD_NAME_RE = /^[A-Za-z0-9_-]+\.(png|jpg|jpeg|gif|webp)$/;              // 合法落盘文件名
+const UPLOAD_URL_RE = /^\/api\/chat\/uploads\/([A-Za-z0-9_-]+\.(png|jpg|jpeg|gif|webp))$/; // 合法站内附件 url
 const REPLY_SNIPPET_LENGTH = 60;      // 引用摘要长度
 const NOTIFY_SNIPPET_LENGTH = 60;     // 通知正文摘要长度
 const AGGREGATE_WINDOW_MS = 5 * 60 * 1000; // 同项目通知聚合窗口
@@ -468,6 +478,279 @@ function lastMessageOf(data, projectId) {
     return latest;
 }
 
+// ==================== 图片上传（附件）辅助 ====================
+
+/**
+ * 图片类型识别（以 magic bytes 为准，绝不相信客户端声明的 mime/扩展名）。
+ * 命中返回 { ext, mime }，否则 null。
+ * @param {Buffer} buf
+ * @returns {{ext:string, mime:string}|null}
+ */
+function sniffImageType(buf) {
+    if (!Buffer.isBuffer(buf) || buf.length < 8) return null;
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47 &&
+        buf[4] === 0x0D && buf[5] === 0x0A && buf[6] === 0x1A && buf[7] === 0x0A) {
+        return { ext: 'png', mime: 'image/png' };
+    }
+    // JPEG: FF D8 FF
+    if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) {
+        return { ext: 'jpg', mime: 'image/jpeg' };
+    }
+    // GIF: 47 49 46 38 ("GIF8")
+    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) {
+        return { ext: 'gif', mime: 'image/gif' };
+    }
+    // WEBP: "RIFF" .... "WEBP"
+    if (buf.length >= 12 &&
+        buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+        buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) {
+        return { ext: 'webp', mime: 'image/webp' };
+    }
+    return null;
+}
+
+/**
+ * 扩展名 → Content-Type。
+ * @param {string} ext
+ * @returns {string}
+ */
+function mimeOfExt(ext) {
+    switch (String(ext || '').toLowerCase()) {
+        case 'png': return 'image/png';
+        case 'gif': return 'image/gif';
+        case 'webp': return 'image/webp';
+        default: return 'image/jpeg';
+    }
+}
+
+/**
+ * 上传根目录（与 DB 同级：<dbDir>/uploads）。
+ * @param {object} ctx
+ * @returns {string}
+ */
+function uploadsRoot(ctx) {
+    const base = (ctx && ctx.dbDir) ? ctx.dbDir : path.join(__dirname, '../data');
+    return path.join(base, 'uploads');
+}
+
+/**
+ * 在 <dbDir>/uploads/<YYYY-MM>/ 各月份子目录中查找真实存在的上传文件。
+ * 文件名由服务端生成为 <uuid>.<ext>，故可安全用于 path.join（仍以白名单正则双重把关）。
+ * @param {object} ctx
+ * @param {string} fileName 形如 uuid.ext
+ * @returns {string|null} 绝对路径；未找到返回 null
+ */
+function findUploadedFile(ctx, fileName) {
+    const root = uploadsRoot(ctx);
+    let subs = [];
+    try {
+        subs = fs.readdirSync(root, { withFileTypes: true })
+            .filter((d) => d.isDirectory())
+            .map((d) => d.name);
+    } catch {
+        return null;
+    }
+    for (const sub of subs) {
+        const p = path.join(root, sub, fileName);
+        try {
+            if (fs.statSync(p).isFile()) return p;
+        } catch { /* 该月份目录下不存在，继续 */ }
+    }
+    return null;
+}
+
+/**
+ * 大体积 body 读取（**仅上传端点使用**，绝不修改/复用全局 parseBody 的 1MB 语义）。
+ * @param {import('http').IncomingMessage} req
+ * @param {number} maxBytes
+ * @returns {Promise<object>} 解析后的 JSON；超限返回 { __tooLarge: true }；解析失败返回 {}
+ */
+function readLargeBody(req, maxBytes) {
+    return new Promise((resolve) => {
+        let size = 0;
+        let tooLarge = false;
+        const chunks = [];
+        const HARD_CAP = 64 * 1024 * 1024; // 绝对上限，防止恶意超大 body 耗尽内存
+        req.on('data', (chunk) => {
+            size += chunk.length;
+            if (size > HARD_CAP) {
+                // 远超上限：断开连接，避免无限读取
+                try { req.destroy(); } catch { /* 响应可能已中断 */ }
+                resolve({ __tooLarge: true });
+                return;
+            }
+            if (size > maxBytes) {
+                // 超限但仍在可控范围：丢弃后续数据、继续读完请求，
+                // 以便干净地回 413（直接 destroy 会让客户端收到连接重置而非 413）。
+                tooLarge = true;
+                return;
+            }
+            chunks.push(chunk);
+        });
+        req.on('end', () => {
+            if (tooLarge) { resolve({ __tooLarge: true }); return; }
+            try {
+                const raw = Buffer.concat(chunks).toString('utf8');
+                resolve(raw ? JSON.parse(raw) : {});
+            } catch {
+                resolve({});
+            }
+        });
+        req.on('error', () => resolve({}));
+    });
+}
+
+/**
+ * 过滤合法附件。仅接受：
+ *   1. url 为站内 /api/chat/uploads/<name> 且 name 命中白名单；
+ *   2. 对应落盘文件真实存在。
+ * 非法项静默丢弃（不报错）。最多保留 MAX_ATTACHMENTS 张。
+ * @param {object} ctx
+ * @param {any} rawList
+ * @returns {object[]}
+ */
+function sanitizeAttachments(ctx, rawList) {
+    if (!Array.isArray(rawList)) return [];
+    const out = [];
+    for (const a of rawList) {
+        if (!a || typeof a !== 'object') continue;
+        const url = String(a.url || '');
+        const m = UPLOAD_URL_RE.exec(url);
+        if (!m) continue; // 站外或非法路径 → 丢弃
+        const fileName = m[1];
+        if (!findUploadedFile(ctx, fileName)) continue; // 文件不存在 → 丢弃
+        const rec = {
+            id: String(a.id || crypto.randomUUID()),
+            type: 'image',
+            url,
+            name: String(a.name || fileName).slice(0, 120),
+            size: Number(a.size) || 0,
+            mime: String(a.mime || mimeOfExt(m[2])).slice(0, 60),
+            width: Number(a.width) > 0 ? Number(a.width) : undefined,
+            height: Number(a.height) > 0 ? Number(a.height) : undefined,
+        };
+        out.push(rec);
+        if (out.length >= MAX_ATTACHMENTS) break;
+    }
+    return out;
+}
+
+/**
+ * 生成通知预览 / 引用快照摘要。
+ * 图片消息显示 "[图片]"；带文字则 "[图片] 文字"；纯文字原样；统一按 maxLen 截断。
+ * @param {object} message { content, attachments, recalled }
+ * @param {number} maxLen
+ * @returns {string}
+ */
+function messageSnippet(message, maxLen) {
+    if (!message || message.recalled) return '';
+    const text = String(message.content || '');
+    const hasImage = Array.isArray(message.attachments) && message.attachments.length > 0;
+    const base = hasImage ? (text ? `[图片] ${text}` : '[图片]') : text;
+    return base.slice(0, maxLen);
+}
+
+/**
+ * 写二进制图片响应（不走 JSON sendResponse）。
+ * @param {import('http').ServerResponse} res
+ * @param {Buffer} buf
+ * @param {string} mime
+ */
+function sendBinaryImage(res, buf, mime) {
+    res.writeHead(200, {
+        'Content-Type': mime,
+        'Content-Length': buf.length,
+        'Cache-Control': 'private, max-age=604800',
+        'X-Content-Type-Options': 'nosniff',
+    });
+    res.end(buf);
+}
+
+/**
+ * POST /api/chat/uploads —— 上传单张图片（base64 JSON body，独立放宽体积上限）。
+ * 服务端以 magic bytes 识别真实类型并决定扩展名，忽略客户端传入的 name 扩展名。
+ */
+async function handleUpload(req, res, ctx) {
+    const { sendResponse } = ctx;
+    const body = await readLargeBody(req, MAX_UPLOAD_BODY);
+    if (body && body.__tooLarge) { sendResponse(res, 413, { error: '图片过大（上限约 4.5MB）' }); return; }
+
+    const raw = String((body && body.data) || '');
+    if (!raw) { sendResponse(res, 400, { error: '缺少图片数据' }); return; }
+    // 允许带 dataURL 前缀（data:image/png;base64,....）
+    const b64 = raw.startsWith('data:') ? raw.replace(/^data:[^,]*,/, '') : raw;
+    if (b64.length > MAX_UPLOAD_B64_LENGTH) { sendResponse(res, 413, { error: '图片过大（上限约 4.5MB）' }); return; }
+
+    let buf;
+    try {
+        buf = Buffer.from(b64, 'base64');
+    } catch {
+        sendResponse(res, 400, { error: '图片数据无效' });
+        return;
+    }
+    if (!buf || buf.length === 0) { sendResponse(res, 400, { error: '图片数据无效' }); return; }
+
+    const info = sniffImageType(buf);
+    if (!info) { sendResponse(res, 400, { error: '仅支持 PNG / JPEG / GIF / WEBP 图片' }); return; }
+
+    const now = new Date();
+    const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const dir = path.join(uploadsRoot(ctx), ym);
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+    } catch {
+        sendResponse(res, 500, { error: '图片保存失败' });
+        return;
+    }
+    const fileName = `${crypto.randomUUID()}.${info.ext}`;
+    try {
+        fs.writeFileSync(path.join(dir, fileName), buf);
+    } catch {
+        sendResponse(res, 500, { error: '图片保存失败' });
+        return;
+    }
+
+    const displayName = String((body && body.name) || '').slice(0, 120) || `图片.${info.ext}`;
+    const attachment = {
+        id: crypto.randomUUID(),
+        type: 'image',
+        url: `${UPLOAD_URL_PREFIX}/${fileName}`,
+        name: displayName,
+        size: buf.length,
+        mime: info.mime,
+        width: Number(body && body.width) > 0 ? Number(body.width) : undefined,
+        height: Number(body && body.height) > 0 ? Number(body.height) : undefined,
+    };
+    sendResponse(res, 200, { attachment });
+}
+
+/**
+ * GET /api/chat/uploads/<name> —— 读取图片（二进制响应）。
+ * 防路径穿越：拒绝含 `/`、`\`、`..` 的 name，并强制白名单文件名格式。
+ */
+function handleServeUpload(req, res, ctx, name) {
+    const { sendResponse } = ctx;
+    if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) {
+        sendResponse(res, 400, { error: '非法文件名' });
+        return;
+    }
+    const m = UPLOAD_NAME_RE.exec(name);
+    if (!m) { sendResponse(res, 404, { error: '文件不存在' }); return; }
+
+    const filePath = findUploadedFile(ctx, name);
+    if (!filePath) { sendResponse(res, 404, { error: '文件不存在' }); return; }
+
+    let buf;
+    try {
+        buf = fs.readFileSync(filePath);
+    } catch {
+        sendResponse(res, 404, { error: '文件不存在' });
+        return;
+    }
+    sendBinaryImage(res, buf, mimeOfExt(m[1]));
+}
+
 // ==================== 各接口实现 ====================
 
 /**
@@ -552,9 +835,12 @@ async function handlePostMessage(req, res, ctx, userId, projectId) {
     const body = await parseBody(req);
     if (body && body.__tooLarge) { sendResponse(res, 413, { error: '消息体过大' }); return; }
 
-    // 内容校验：trim、去空、超长截断
+    // 附件校验（站内路径 + 文件真实存在 + 白名单扩展名，最多 9 张；非法项静默丢弃）
+    const attachments = sanitizeAttachments(ctx, body && body.attachments);
+
+    // 内容校验：trim、去空、超长截断；有合法附件时允许 content 为空字符串
     let content = String((body && body.content) || '').trim();
-    if (!content) { sendResponse(res, 400, { error: '消息内容不能为空' }); return; }
+    if (!content && attachments.length === 0) { sendResponse(res, 400, { error: '消息内容不能为空' }); return; }
     if (content.length > MAX_CONTENT_LENGTH) content = content.slice(0, MAX_CONTENT_LENGTH);
 
     const memberIds = projectMemberIds(data, projectId);
@@ -578,7 +864,7 @@ async function handlePostMessage(req, res, ctx, userId, projectId) {
             replyTo = {
                 id: target.id,
                 senderName: target.senderName || '成员',
-                content: (target.recalled ? '' : String(target.content || '')).slice(0, REPLY_SNIPPET_LENGTH),
+                content: messageSnippet(target, REPLY_SNIPPET_LENGTH),
             };
         }
     }
@@ -593,6 +879,7 @@ async function handlePostMessage(req, res, ctx, userId, projectId) {
         content,
         mentions,
         replyTo,
+        attachments,
         createdAt: nowIso,
         recalled: false,
     };
@@ -602,7 +889,7 @@ async function handlePostMessage(req, res, ctx, userId, projectId) {
     const projectName = project.name || '项目';
     const recipients = memberIds.filter((id) => id !== userId);
     const now = Date.now();
-    const previewText = content.slice(0, NOTIFY_SNIPPET_LENGTH);
+    const previewText = messageSnippet(message, NOTIFY_SNIPPET_LENGTH);
 
     for (const rid of recipients) {
         const isMention = mentions.includes(rid);
@@ -795,6 +1082,7 @@ function handleRecall(res, ctx, userId, messageId) {
     msg.recalled = true;
     msg.content = '';
     msg.mentions = [];
+    msg.attachments = [];
     saveData(data);
 
     // 广播撤回事件给群成员（含发送者，便于多端同步）
@@ -889,8 +1177,12 @@ async function handlePostDirectMessage(req, res, ctx, userId, peerId) {
     const memberIds = projectMemberIds(data, projectId);
     if (!memberIds.includes(String(peerId))) { sendResponse(res, 403, { error: '对方不是该项目成员' }); return; }
 
+    // 附件校验（站内路径 + 文件真实存在 + 白名单扩展名，最多 9 张；非法项静默丢弃）
+    const attachments = sanitizeAttachments(ctx, body && body.attachments);
+
+    // 内容校验：有合法附件时允许 content 为空字符串
     let content = String((body && body.content) || '').trim();
-    if (!content) { sendResponse(res, 400, { error: '消息内容不能为空' }); return; }
+    if (!content && attachments.length === 0) { sendResponse(res, 400, { error: '消息内容不能为空' }); return; }
     if (content.length > MAX_CONTENT_LENGTH) content = content.slice(0, MAX_CONTENT_LENGTH);
 
     const senderName = ac.getUserName(data, userId) || '成员';
@@ -912,7 +1204,7 @@ async function handlePostDirectMessage(req, res, ctx, userId, peerId) {
             replyTo = {
                 id: target.id,
                 senderName: target.senderName || '成员',
-                content: (target.recalled ? '' : String(target.content || '')).slice(0, REPLY_SNIPPET_LENGTH),
+                content: messageSnippet(target, REPLY_SNIPPET_LENGTH),
             };
         }
     }
@@ -925,13 +1217,14 @@ async function handlePostDirectMessage(req, res, ctx, userId, peerId) {
         senderName,
         content,
         replyTo,
+        attachments,
         createdAt: nowIso,
         recalled: false,
     };
     data.chatDirectMessages.push(message);
 
     // 副作用：给接收方发站内通知（type=chat_direct，不匹配 BPM 白名单）
-    const previewText = content.slice(0, NOTIFY_SNIPPET_LENGTH);
+    const previewText = messageSnippet(message, NOTIFY_SNIPPET_LENGTH);
     const now = Date.now();
     const aggIdx = (data.notifications || []).findIndex(
         (n) =>
@@ -1037,6 +1330,7 @@ function handleRecallDirect(res, ctx, userId, messageId) {
 
     msg.recalled = true;
     msg.content = '';
+    msg.attachments = [];
     // replyTo 保留（设计：撤回仅清空内容，引用快照保留）
     saveData(data);
 
@@ -1075,6 +1369,19 @@ async function handle(req, res, ctx) {
         // 其余接口均需登录
         if (!userId) {
             ctx.sendResponse(res, 401, { error: '未登录' });
+            return true;
+        }
+
+        // ---- 图片上传路由（POST 的 X-Workbench 头由 simple-server 统一校验）----
+        if (pathname === `${CHAT_PREFIX}/uploads` && method === 'POST') {
+            await handleUpload(req, res, ctx);
+            return true;
+        }
+        m = pathname.match(/^\/api\/chat\/uploads\/([^/]+)$/);
+        if (m && method === 'GET') {
+            let name = m[1];
+            try { name = decodeURIComponent(name); } catch { /* 保留原始串，交由白名单校验拒绝 */ }
+            handleServeUpload(req, res, ctx, name);
             return true;
         }
 

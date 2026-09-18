@@ -1967,31 +1967,22 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    // 单个通知删除 - DELETE /api/notifications/:id
-    if (pathname.match(/^\/api\/notifications\/[\w-]+$/) && method === 'DELETE') {
-        const id = pathname.split('/').pop();
-        const data = loadData();
-        const index = data.notifications.findIndex(n => n.id === id);
-        if (index !== -1) {
-            data.notifications.splice(index, 1);
-            saveData(data);
-            sendResponse(res, 200, { success: true });
-        } else {
-            sendResponse(res, 404, { error: 'Notification not found' });
-        }
-        return;
-    }
-
     // 清除已读 - DELETE /api/notifications/read
+    // 路由顺序（Bug 修复）：本静态路由必须声明在动态路由 DELETE /api/notifications/:id 之前，
+    // 否则会被 :id 分支抢先命中（原 :id 正则会匹配 'read'），导致返回 404 的"假成功"。
     if (pathname === '/api/notifications/read' && method === 'DELETE') {
         const body = await parseBody(req);
         const data = loadData();
         const userId = body.userId;
         const before = data.notifications.length;
+        // 按用户隔离清除已读（数据破坏性缺陷修复）：
+        //  - 提供 userId 时：仅删除"属于该用户且已读"的通知，绝不动其他用户的任何通知；
+        //  - 缺失 userId 时：保留原有全局语义（删除所有已读），以维持向后兼容。
+        // （原实现 `if (n.read) return false;` 只要 read 就删，完全不看 user_id，
+        //   会把全库所有用户的已读通知一并删除。）
         data.notifications = data.notifications.filter(n => {
-            if (n.read) return false;
-            if (userId && n.user_id !== userId) return true;
-            return true;
+            if (userId) return !(n.read && n.user_id === userId);
+            return !n.read;
         });
         const removed = before - data.notifications.length;
         saveData(data);
@@ -2000,6 +1991,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 清空全部 - DELETE /api/notifications/all
+    // 路由顺序（同 Bug 修复）：同样必须声明在 DELETE /api/notifications/:id 之前，防被遮蔽。
     if (pathname === '/api/notifications/all' && method === 'DELETE') {
         const body = await parseBody(req);
         const data = loadData();
@@ -2013,6 +2005,23 @@ const server = http.createServer(async (req, res) => {
         const removed = before - data.notifications.length;
         saveData(data);
         sendResponse(res, 200, { success: true, removedCount: removed });
+        return;
+    }
+
+    // 单个通知删除 - DELETE /api/notifications/:id
+    // 负向断言 (?!read$|all$|read-all$) 作为双保险：保留字（read/all/read-all）永不作为通知 id，
+    // 即使将来在别处插入新的静态路由，也不会被本动态路由抢先匹配而重蹈遮蔽覆辙。
+    if (pathname.match(/^\/api\/notifications\/(?!read$|all$|read-all$)[\w-]+$/) && method === 'DELETE') {
+        const id = pathname.split('/').pop();
+        const data = loadData();
+        const index = data.notifications.findIndex(n => n.id === id);
+        if (index !== -1) {
+            data.notifications.splice(index, 1);
+            saveData(data);
+            sendResponse(res, 200, { success: true });
+        } else {
+            sendResponse(res, 404, { error: 'Notification not found' });
+        }
         return;
     }
 
@@ -2393,7 +2402,7 @@ const server = http.createServer(async (req, res) => {
     // ==================== 项目群聊 API ====================
     if (chat.isChatPath(pathname)) {
         const handled = await chat.handle(req, res, {
-            pathname, method, url, loadData, saveData, sendResponse, parseBody, generateId, ac,
+            pathname, method, url, loadData, saveData, sendResponse, parseBody, generateId, ac, dbDir: DB_DIR,
         });
         if (handled) return;
     }
