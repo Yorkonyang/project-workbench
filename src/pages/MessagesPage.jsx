@@ -1,0 +1,324 @@
+/**
+ * MessagesPage - 项目群聊 / 单聊（微信式两栏）
+ * 左侧为树形二级菜单：项目行（chevron 展开/收起 + 主体打开群聊），
+ * 展开区显示项目成员卡片（点击打开与成员的单聊）。
+ * 支持 URL 参数 ?project=<id> 直接定位群聊，?peer=<id> 直接定位单聊。
+ */
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { format, isToday } from 'date-fns';
+import { Search, MessageSquare, ArrowLeft, Loader2, ChevronRight, User } from 'lucide-react';
+import PageContainer from '@/components/layout/PageContainer';
+import EmptyState from '@/components/ui/EmptyState';
+import ChatWindow from '@/components/chat/ChatWindow';
+import { cn } from '@/lib/utils';
+import { pinyinMatch } from '@/lib/pinyinMatch';
+import { useChatStore } from '@/store/useChatStore';
+import { useMemberStore } from '@/store/useMemberStore';
+import { useAuthStore } from '@/store/useAuthStore';
+
+/** 会话列表时间：今天显示 HH:mm，否则 MM-dd */
+function convTime(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    return isToday(d) ? format(d, 'HH:mm') : format(d, 'MM-dd');
+  } catch {
+    return '';
+  }
+}
+
+/** 未读角标文案：>99 显示 99+ */
+function badgeText(n) {
+  return n > 99 ? '99+' : String(n);
+}
+
+export default function MessagesPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [query, setQuery] = useState('');
+  const [expanded, setExpanded] = useState({}); // projectId -> boolean
+
+  const conversations = useChatStore((s) => s.conversations);
+  const loading = useChatStore((s) => s.conversationsLoading);
+  const error = useChatStore((s) => s.conversationsError);
+  const activeProjectId = useChatStore((s) => s.activeProjectId);
+  const activePeerId = useChatStore((s) => s.activePeerId);
+  const unreadByProject = useChatStore((s) => s.unreadByProject);
+  const unreadByPeer = useChatStore((s) => s.unreadByPeer);
+  const directConversations = useChatStore((s) => s.directConversations);
+  const fetchConversations = useChatStore((s) => s.fetchConversations);
+  const fetchUnread = useChatStore((s) => s.fetchUnread);
+  const fetchDirectConversations = useChatStore((s) => s.fetchDirectConversations);
+  const openProject = useChatStore((s) => s.openProject);
+  const closeProject = useChatStore((s) => s.closeProject);
+  const openPeer = useChatStore((s) => s.openPeer);
+  const closePeer = useChatStore((s) => s.closePeer);
+
+  const allMembers = useMemberStore((s) => s.members);
+  const currentUserId = useAuthStore((s) => s.currentUserId) || '';
+
+  // 首次进入：拉会话与未读
+  useEffect(() => {
+    fetchConversations();
+    fetchUnread();
+    fetchDirectConversations();
+  }, [fetchConversations, fetchUnread, fetchDirectConversations]);
+
+  // URL 参数定位会话
+  useEffect(() => {
+    const pid = searchParams.get('project');
+    const peer = searchParams.get('peer');
+    if (peer) {
+      if (peer !== activePeerId) openPeer(peer);
+    } else if (pid && pid !== activeProjectId) {
+      openProject(pid);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // 单聊未读快照：peerId -> unreadCount（合并会话列表与 byPeer）
+  const directUnreadMap = useMemo(() => {
+    const map = {};
+    // 自己不是"对方"：显式排除 currentUserId 名下，杜绝"自己发给自己的消息"计为未读
+    const selfKey = currentUserId ? String(currentUserId) : '';
+    (directConversations || []).forEach((c) => {
+      if (!c.peerId || String(c.peerId) === selfKey) return;
+      map[c.peerId] = c.unreadCount || 0;
+    });
+    // byPeer（后端实时未读）优先覆盖
+    Object.keys(unreadByPeer || {}).forEach((pid) => {
+      if (selfKey && String(pid) === selfKey) return;
+      map[pid] = unreadByPeer[pid] || 0;
+    });
+    return map;
+  }, [directConversations, unreadByPeer, currentUserId]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim();
+    if (!q) return conversations;
+    return conversations.filter(
+      (c) => pinyinMatch(c.projectName || '', q) || (c.projectCode || '').toLowerCase().includes(q.toLowerCase())
+    );
+  }, [conversations, query]);
+
+  const toggleExpand = (pid) => {
+    setExpanded((prev) => ({ ...prev, [pid]: !prev[pid] }));
+  };
+
+  // 项目成员卡片（过滤掉自己），用于二级菜单
+  // 加固：登录态未就绪（currentUserId 为空）时直接返回空列表，不渲染成员卡片，
+  // 避免"自己"混入二级菜单（空串/ null 下 String(m.id) !== String(currentUserId) 恒为 true，过滤会失效）。
+  const membersOf = (c) => {
+    if (!currentUserId) return [];
+    const ids = c.memberIds || [];
+    return ids
+      .map((id) => allMembers.find((m) => m.id === id))
+      .filter((m) => m && String(m.id) !== String(currentUserId));
+  };
+
+  const handleSelectProject = (pid) => {
+    openProject(pid);
+    closePeer();
+    setSearchParams({ project: pid });
+  };
+
+  const handleSelectPeer = (pid, peerId) => {
+    openPeer(peerId);
+    closeProject();
+    setSearchParams({ peer: peerId });
+  };
+
+  const handleBack = () => {
+    closeProject();
+    closePeer();
+    setSearchParams({});
+  };
+
+  const chatMode = activePeerId ? 'direct' : 'project';
+  const chatProjectId = activePeerId ? null : activeProjectId;
+
+  return (
+    <PageContainer>
+      <div className="flex items-center gap-2 mb-4">
+        <MessageSquare className="w-5 h-5 text-primary-500" />
+        <h2 className="text-xl font-bold text-slate-800">项目群聊</h2>
+        <span className="text-sm text-slate-400">按项目分群的即时沟通，可发起单聊</span>
+      </div>
+
+      <div className="h-[calc(100vh-11rem)] min-h-[420px] flex rounded-xl overflow-hidden">
+        {/* 左栏：会话列表（树形二级菜单） */}
+        <div
+          className={cn(
+            'w-full lg:w-72 shrink-0 flex-col bg-white border border-slate-200 rounded-xl lg:rounded-r-none lg:border-r-0',
+            (activeProjectId || activePeerId) ? 'hidden lg:flex' : 'flex'
+          )}
+        >
+          <div className="p-3 border-b border-slate-100">
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="搜索项目名称 / 编号"
+                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400"
+              />
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+            {loading && conversations.length === 0 ? (
+              <div className="flex items-center justify-center gap-2 py-10 text-slate-400 text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" /> 加载会话中…
+              </div>
+            ) : error ? (
+              <div className="p-4 text-sm text-red-500">{error}</div>
+            ) : filtered.length === 0 ? (
+              <div className="p-6 text-center text-sm text-slate-400">暂无可参与的群聊</div>
+            ) : (
+              filtered.map((c) => {
+                const unread = unreadByProject[c.projectId] || 0;
+                const isActiveProject = c.projectId === activeProjectId && !activePeerId;
+                const isExpanded = Boolean(expanded[c.projectId]);
+                const members = membersOf(c);
+                return (
+                  <div key={c.projectId} className="border-b border-slate-50">
+                    {/* 项目行：chevron + 主体（点击打开群聊） */}
+                    <div
+                      className={cn(
+                        'flex items-stretch',
+                        isActiveProject ? 'bg-primary-50' : 'hover:bg-slate-50'
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(c.projectId)}
+                        className="flex items-center justify-center w-8 shrink-0 text-slate-400 hover:text-slate-600"
+                        title={isExpanded ? '收起成员' : '展开成员'}
+                      >
+                        <ChevronRight
+                          className={cn('w-4 h-4 transition-transform', isExpanded ? 'rotate-90' : '')}
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectProject(c.projectId)}
+                        className="flex-1 flex items-center gap-3 px-2 py-3 text-left"
+                      >
+                        <span
+                          className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold shrink-0"
+                          style={{ backgroundColor: c.projectColor || '#6366F1' }}
+                        >
+                          {(c.projectName || '?').charAt(0)}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-medium text-slate-800 truncate">
+                              {c.projectName}
+                            </span>
+                            <span className="text-[10px] text-slate-400 shrink-0">
+                              {convTime(c.lastMessageAt)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 mt-0.5">
+                            <span className="text-xs text-slate-400 truncate">{previewTextOf(c)}</span>
+                            {unread > 0 ? (
+                              <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-medium flex items-center justify-center">
+                                {badgeText(unread)}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+
+                    {/* 展开区：成员卡片（点击打开单聊） */}
+                    {isExpanded ? (
+                      <div className="bg-slate-50/60 max-h-60 overflow-y-auto">
+                        {members.length === 0 ? (
+                          <div className="px-4 py-2 text-xs text-slate-400">暂无其他成员</div>
+                        ) : (
+                          members.map((m) => {
+                            const pu = directUnreadMap[m.id] || 0;
+                            const isActivePeer = activePeerId === m.id;
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                onClick={() => handleSelectPeer(c.projectId, m.id)}
+                                className={cn(
+                                  'w-full flex items-center gap-2.5 pl-10 pr-3 py-2 text-left',
+                                  isActivePeer ? 'bg-primary-50' : 'hover:bg-white'
+                                )}
+                              >
+                                <span
+                                  className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-bold shrink-0"
+                                  style={{ backgroundColor: m.avatarColor || '#6b7280' }}
+                                >
+                                  {(m.name || '?').charAt(0)}
+                                </span>
+                                <span className="flex-1 min-w-0 text-sm text-slate-700 truncate">{m.name}</span>
+                                {pu > 0 ? (
+                                  <span className="shrink-0 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[10px] font-medium flex items-center justify-center">
+                                    {badgeText(pu)}
+                                  </span>
+                                ) : null}
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* 右栏：聊天窗口 */}
+        <div
+          className={cn(
+            'flex-1 min-w-0 flex-col',
+            (activeProjectId || activePeerId) ? 'flex' : 'hidden lg:flex'
+          )}
+        >
+          {activePeerId || activeProjectId ? (
+            <div className="flex-1 min-h-0 flex flex-col">
+              {/* 移动端返回按钮 */}
+              <button
+                type="button"
+                onClick={handleBack}
+                className="lg:hidden flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 px-2 py-2"
+              >
+                <ArrowLeft className="w-4 h-4" /> 返回会话列表
+              </button>
+              <div className="flex-1 min-h-0">
+                <ChatWindow
+                  mode={chatMode}
+                  projectId={chatProjectId}
+                  peerId={activePeerId}
+                  height="100%"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center bg-white border border-slate-200 rounded-xl lg:rounded-l-none">
+              <EmptyState
+                icon={MessageSquare}
+                title="选择会话"
+                description="从左侧选择项目群，或展开项目成员发起单聊"
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    </PageContainer>
+  );
+}
+
+/** 群会话预览文案 */
+function previewTextOf(c) {
+  const last = c.lastMessage;
+  if (!last) return '暂无消息';
+  return `${last.recalled ? '消息已撤回' : `${last.senderName || ''}：${last.content || ''}`}`;
+}
