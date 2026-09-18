@@ -25,6 +25,16 @@ function dedupeById(messages) {
   return [...map.values()];
 }
 
+/**
+ * 单聊复合 key：`${peerId}#${projectId}`（projectId 为空 → `${peerId}#`）。
+ * projectId 是"在哪个项目下"，旧数据缺 projectId 归 null 桶。
+ */
+function peerKey(peerId, projectId) {
+  return `${peerId}#${projectId == null ? '' : projectId}`;
+}
+
+export { peerKey };
+
 export const useChatStore = create(
   persist(
     (set, get) => ({
@@ -38,14 +48,15 @@ export const useChatStore = create(
       unreadTotal: 0,
       unreadByProject: {},
       mentionByProject: {},
-      // ---- V2 单聊状态 ----
-      directConversations: [],     // 单聊会话列表
-      messagesByPeer: {},          // peerId -> 消息数组（升序）
-      hasMoreByPeer: {},           // peerId -> boolean
-      loadingByPeer: {},           // peerId -> boolean
-      unreadByPeer: {},            // peerId -> 未读数（单聊，与群 unreadByProject 隔离）
+      // ---- V2 单聊状态（按项目隔离：复合 key `${peerId}#${projectId}`）----
+      directConversations: [],     // 单聊会话列表（每项带 projectId）
+      messagesByPeer: {},         // `${peerId}#${projectId}` -> 消息数组（升序）
+      hasMoreByPeer: {},          // `${peerId}#${projectId}` -> boolean
+      loadingByPeer: {},          // `${peerId}#${projectId}` -> boolean
+      unreadByPeer: {},           // `${peerId}#${projectId}` -> 未读数（与群 unreadByProject 隔离）
       directTotal: 0,
-      activePeerId: null,
+      activePeerId: null,         // 对方成员 id
+      activePeerProjectId: null,  // 当前单聊所在项目 id（与 activePeerId 成二元组）
       sseConnected: false,
       settings: { sound: true, desktop: true }, // ← 唯一持久化字段
 
@@ -245,31 +256,32 @@ export const useChatStore = create(
         }
       },
 
-      // ---- V2 单聊：打开会话（语义同 openProject：无缓存拉 50 条；有缓存秒显 + 后台对齐合并）----
-      openPeer: async (peerId) => {
+      // ---- V2 单聊：打开会话（复合 key；无缓存拉 50 条；有缓存秒显 + 后台对齐合并）----
+      openPeer: async (peerId, projectId = null) => {
         if (!peerId) return;
-        set({ activePeerId: peerId });
-        const cached = get().messagesByPeer[peerId];
+        const key = peerKey(peerId, projectId);
+        set({ activePeerId: peerId, activePeerProjectId: projectId });
+        const cached = get().messagesByPeer[key];
         if (!cached) {
-          set((s) => ({ loadingByPeer: { ...s.loadingByPeer, [peerId]: true } }));
+          set((s) => ({ loadingByPeer: { ...s.loadingByPeer, [key]: true } }));
           try {
-            const res = await apiClient.getDirectMessages(peerId, { limit: PAGE_SIZE });
+            const res = await apiClient.getDirectMessages(peerId, { limit: PAGE_SIZE, project: projectId });
             const messages = Array.isArray(res) ? res : ((res && res.messages) || []);
             const hasMore = Array.isArray(res) ? messages.length >= PAGE_SIZE : Boolean(res && res.hasMore);
             set((s) => ({
-              messagesByPeer: { ...s.messagesByPeer, [peerId]: sortByTime(messages) },
-              hasMoreByPeer: { ...s.hasMoreByPeer, [peerId]: hasMore },
-              loadingByPeer: { ...s.loadingByPeer, [peerId]: false },
+              messagesByPeer: { ...s.messagesByPeer, [key]: sortByTime(messages) },
+              hasMoreByPeer: { ...s.hasMoreByPeer, [key]: hasMore },
+              loadingByPeer: { ...s.loadingByPeer, [key]: false },
             }));
           } catch (err) {
-            set((s) => ({ loadingByPeer: { ...s.loadingByPeer, [peerId]: false } }));
+            set((s) => ({ loadingByPeer: { ...s.loadingByPeer, [key]: false } }));
           }
         } else {
           try {
-            const res = await apiClient.getDirectMessages(peerId, { limit: PAGE_SIZE });
+            const res = await apiClient.getDirectMessages(peerId, { limit: PAGE_SIZE, project: projectId });
             const serverList = sortByTime(Array.isArray(res) ? res : ((res && res.messages) || []));
             set((s) => {
-              const local = s.messagesByPeer[peerId] || [];
+              const local = s.messagesByPeer[key] || [];
               const serverIds = new Set(serverList.map((m) => m.id));
               const firstServerTime = serverList.length ? new Date(serverList[0].createdAt).getTime() : Infinity;
               const lastServerTime = serverList.length ? new Date(serverList[serverList.length - 1].createdAt).getTime() : 0;
@@ -290,70 +302,76 @@ export const useChatStore = create(
                 : Boolean(res && res.hasMore);
 
               return {
-                messagesByPeer: { ...s.messagesByPeer, [peerId]: merged },
-                hasMoreByPeer: { ...s.hasMoreByPeer, [peerId]: serverHasMore || olderLocal.length > 0 },
+                messagesByPeer: { ...s.messagesByPeer, [key]: merged },
+                hasMoreByPeer: { ...s.hasMoreByPeer, [key]: serverHasMore || olderLocal.length > 0 },
               };
             });
           } catch (err) {
             // 后台对齐失败：保留缓存展示，不打断用户
           }
         }
-        await get().markDirectRead(peerId);
+        await get().markDirectRead(peerId, projectId);
       },
 
-      closePeer: () => set({ activePeerId: null }),
+      closePeer: () => set({ activePeerId: null, activePeerProjectId: null }),
 
-      // ---- V2 单聊：上拉加载更早的消息 ----
-      loadMoreDirect: async (peerId) => {
+      // ---- V2 单聊：上拉加载更早的消息（复合 key）----
+      loadMoreDirect: async (peerId, projectId = null) => {
         if (!peerId) return;
-        if (get().loadingByPeer[peerId]) return;
-        if (!get().hasMoreByPeer[peerId]) return;
-        const existing = get().messagesByPeer[peerId] || [];
+        const key = peerKey(peerId, projectId);
+        if (get().loadingByPeer[key]) return;
+        if (!get().hasMoreByPeer[key]) return;
+        const existing = get().messagesByPeer[key] || [];
         const before = existing.length ? existing[0].createdAt : undefined;
-        set((s) => ({ loadingByPeer: { ...s.loadingByPeer, [peerId]: true } }));
+        set((s) => ({ loadingByPeer: { ...s.loadingByPeer, [key]: true } }));
         try {
-          const res = await apiClient.getDirectMessages(peerId, { before, limit: PAGE_SIZE });
+          const res = await apiClient.getDirectMessages(peerId, { before, limit: PAGE_SIZE, project: projectId });
           const older = Array.isArray(res) ? res : ((res && res.messages) || []);
           const hasMore = Array.isArray(res) ? older.length >= PAGE_SIZE : Boolean(res && res.hasMore);
           set((s) => {
-            const prev = s.messagesByPeer[peerId] || [];
+            const prev = s.messagesByPeer[key] || [];
             const merged = sortByTime(dedupeById([...older, ...prev]));
             return {
-              messagesByPeer: { ...s.messagesByPeer, [peerId]: merged },
-              hasMoreByPeer: { ...s.hasMoreByPeer, [peerId]: hasMore },
-              loadingByPeer: { ...s.loadingByPeer, [peerId]: false },
+              messagesByPeer: { ...s.messagesByPeer, [key]: merged },
+              hasMoreByPeer: { ...s.hasMoreByPeer, [key]: hasMore },
+              loadingByPeer: { ...s.loadingByPeer, [key]: false },
             };
           });
         } catch (err) {
-          set((s) => ({ loadingByPeer: { ...s.loadingByPeer, [peerId]: false } }));
+          set((s) => ({ loadingByPeer: { ...s.loadingByPeer, [key]: false } }));
         }
       },
 
-      // ---- V2 单聊：发送（乐观插入 + 去重）----
-      sendDirect: async (peerId, content, replyTo = null) => {
+      // ---- V2 单聊：发送（乐观插入 + 去重，带 projectId）----
+      sendDirect: async (peerId, content, replyTo = null, projectId = null) => {
         const text = (content || '').trim();
         if (!text) return null;
         const message = await apiClient.sendDirectMessage(peerId, {
           content: text,
           replyToId: replyTo ? replyTo.id : undefined,
+          projectId,
         });
+        // 服务端返回的消息带 projectId；优先用消息自带维度定位复合 key
+        const mProj = message && message.projectId != null ? message.projectId : projectId;
+        const key = peerKey(peerId, mProj);
         set((s) => {
-          const prev = s.messagesByPeer[peerId] || [];
+          const prev = s.messagesByPeer[key] || [];
           if (prev.some((m) => m.id === message.id)) return {};
-          return { messagesByPeer: { ...s.messagesByPeer, [peerId]: sortByTime([...prev, message]) } };
+          return { messagesByPeer: { ...s.messagesByPeer, [key]: sortByTime([...prev, message]) } };
         });
         get().upsertDirectPreview(message);
         return message;
       },
 
-      // ---- V2 单聊：标记已读（本地清零 + 上报，不动群维度）----
-      markDirectRead: async (peerId) => {
+      // ---- V2 单聊：标记已读（本地清零 + 上报，游标按三元组；不动群维度）----
+      markDirectRead: async (peerId, projectId = null) => {
         if (!peerId) return;
+        const key = peerKey(peerId, projectId);
         const lastReadAt = new Date().toISOString();
         set((s) => {
           const unreadByPeer = { ...s.unreadByPeer };
-          const cleared = unreadByPeer[peerId] || 0;
-          delete unreadByPeer[peerId];
+          const cleared = unreadByPeer[key] || 0;
+          delete unreadByPeer[key];
           return {
             unreadByPeer,
             directTotal: Math.max(0, (s.directTotal || 0) - cleared),
@@ -361,7 +379,7 @@ export const useChatStore = create(
           };
         });
         try {
-          await apiClient.markDirectRead(peerId, lastReadAt);
+          await apiClient.markDirectRead(peerId, lastReadAt, projectId);
         } catch (err) {
           // 已读上报失败不影响前端显示
         }
@@ -371,15 +389,18 @@ export const useChatStore = create(
       recallDirect: async (messageId) => {
         const updated = await apiClient.recallDirectMessage(messageId);
         if (updated && updated.fromId) {
-          const peerId = String(updated.fromId) === String(useAuthStore.getState().currentUserId)
+          const me = useAuthStore.getState().currentUserId;
+          const peerId = String(updated.fromId) === String(me)
             ? updated.toId
             : updated.fromId;
+          const pProj = updated.projectId == null ? null : updated.projectId;
+          const key = peerKey(peerId, pProj);
           set((s) => {
-            const prev = s.messagesByPeer[peerId] || [];
+            const prev = s.messagesByPeer[key] || [];
             return {
               messagesByPeer: {
                 ...s.messagesByPeer,
-                [peerId]: prev.map((m) => (m.id === updated.id ? updated : m)),
+                [key]: prev.map((m) => (m.id === updated.id ? updated : m)),
               },
             };
           });
@@ -388,20 +409,23 @@ export const useChatStore = create(
         return updated;
       },
 
-      // ---- V2 单聊：SSE 到达（入库 + 摘要 + 未读 +1，非当前会话且非自己发送）----
+      // ---- V2 单聊：SSE 到达（入库 + 摘要 + 未读 +1，非当前会话且非自己发送；带 projectId）----
       receiveDirect: (message) => {
         if (!message || !message.id) return;
         const me = useAuthStore.getState().currentUserId;
         const peerId = String(message.fromId) === String(me) ? message.toId : message.fromId;
+        const pProj = message.projectId == null ? null : message.projectId;
+        const key = peerKey(peerId, pProj);
         set((s) => {
-          const prev = s.messagesByPeer[peerId] || [];
+          const prev = s.messagesByPeer[key] || [];
           const already = prev.some((m) => m.id === message.id);
           const messagesByPeer = already
             ? s.messagesByPeer
-            : { ...s.messagesByPeer, [peerId]: sortByTime([...prev, message]) };
+            : { ...s.messagesByPeer, [key]: sortByTime([...prev, message]) };
 
           const isMine = String(message.fromId) === String(me);
-          const isActive = s.activePeerId === peerId;
+          // 当前会话 = activePeerId + activePeerProjectId 二元组
+          const isActive = s.activePeerId === peerId && s.activePeerProjectId === pProj;
           let unreadTotal = s.unreadTotal;
           let directTotal = s.directTotal;
           let unreadByPeer = s.unreadByPeer;
@@ -411,20 +435,22 @@ export const useChatStore = create(
           if (me && !isMine && !isActive && !already) {
             unreadTotal = (unreadTotal || 0) + 1;
             directTotal = (directTotal || 0) + 1;
-            unreadByPeer = { ...unreadByPeer, [peerId]: (unreadByPeer[peerId] || 0) + 1 };
+            unreadByPeer = { ...unreadByPeer, [key]: (unreadByPeer[key] || 0) + 1 };
           }
           return { messagesByPeer, unreadTotal, directTotal, unreadByPeer };
         });
         get().upsertDirectPreview(message);
       },
 
-      // ---- V2 单聊：本地应用撤回（来自 SSE drecall）----
+      // ---- V2 单聊：本地应用撤回（来自 SSE drecall；旧事件无 projectId 容错归 null 桶）----
       applyDirectRecall: (payload) => {
         if (!payload || !payload.id) return;
         const me = useAuthStore.getState().currentUserId;
         const peerId = String(payload.fromId) === String(me) ? payload.toId : payload.fromId;
+        const pProj = payload.projectId == null ? null : payload.projectId;
+        const key = peerKey(peerId, pProj);
         set((s) => {
-          const prev = s.messagesByPeer[peerId];
+          const prev = s.messagesByPeer[key];
           if (!prev) return {};
           let changed = false;
           const next = prev.map((m) => {
@@ -433,17 +459,20 @@ export const useChatStore = create(
             return { ...m, recalled: true, content: '' };
           });
           if (!changed) return {};
-          return { messagesByPeer: { ...s.messagesByPeer, [peerId]: next } };
+          return { messagesByPeer: { ...s.messagesByPeer, [key]: next } };
         });
       },
 
-      // ---- V2 单聊：更新会话列表「最后一条消息」----
+      // ---- V2 单聊：更新会话列表「最后一条消息」（按 peerId + projectId 复合定位）----
       upsertDirectPreview: (message) => {
         if (!message || !message.fromId || !message.toId) return;
         const me = useAuthStore.getState().currentUserId;
         const peerId = String(message.fromId) === String(me) ? message.toId : message.fromId;
+        const pProj = message.projectId == null ? null : message.projectId;
         set((s) => {
-          const idx = s.directConversations.findIndex((c) => c.peerId === peerId);
+          const idx = s.directConversations.findIndex(
+            (c) => c.peerId === peerId && c.projectId === pProj
+          );
           if (idx < 0) {
             // 列表尚未加载该会话：仅保证下次拉取会有，不在此造数据
             return {};
@@ -557,6 +586,7 @@ export const useChatStore = create(
           unreadByPeer: {},
           directTotal: 0,
           activePeerId: null,
+          activePeerProjectId: null,
           sseConnected: false,
         }),
     }),

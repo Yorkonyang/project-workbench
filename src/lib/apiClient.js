@@ -8,9 +8,6 @@
 // 生产部署可通过环境变量 VITE_API_URL 覆盖为绝对地址。
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
-// 当前登录用户 id，随每个请求通过 x-user-id 头传给后端，用于项目负责制的归属过滤与写校验
-import { useAuthStore } from '@/store/useAuthStore';
-
 class ApiClient {
     constructor() {
         this.baseURL = API_BASE;
@@ -18,19 +15,23 @@ class ApiClient {
 
     async request(endpoint, options = {}) {
         const url = `${this.baseURL}${endpoint}`;
-        const currentUserId = useAuthStore.getState().currentUserId;
         const config = {
             headers: {
                 'Content-Type': 'application/json',
-                'x-user-id': currentUserId || '',
+                // S5：自定义头作为 CSRF 纵深防御，后端对写请求校验此头
+                'X-Workbench': '1',
                 ...options.headers,
             },
+            // 身份由后端 HttpOnly 会话 cookie（workbench_session）自动携带，
+            // 客户端不再手动发送 x-user-id 头，防止身份伪造。
+            credentials: 'include',
             ...options,
         };
 
         try {
             const response = await fetch(url, config);
             if (!response.ok) {
+                // 401 表示会话失效，交由上层提示重新登录
                 // 优先透传后端返回的错误消息（如排序号冲突提示）
                 let message = `HTTP ${response.status}: ${response.statusText}`;
                 try {
@@ -139,9 +140,10 @@ class ApiClient {
         return this.request(`/projects/${id}/subtree`);
     }
 
-    // 按父过滤获取子项目（parentId=__root__ 取根项目）
+    // 按父过滤获取子项目（parentId=__root__ 取根项目；null/undefined 也显式映射为 __root__，
+    // 避免静默下发全部项目——M2 修复：原 null→'' 会让后端返回所有项目）
     async getProjectChildren(parentId) {
-        const query = parentId != null ? `?parentId=${encodeURIComponent(parentId)}` : '';
+        const query = parentId == null ? '?parentId=__root__' : `?parentId=${encodeURIComponent(parentId)}`;
         return this.request(`/projects${query}`);
     }
 
@@ -175,6 +177,22 @@ class ApiClient {
     async deleteTask(id) {
         return this.request(`/tasks/${id}`, {
             method: 'DELETE',
+        });
+    }
+
+    // 任务变更申请（修改计划/废止）- POST /api/tasks/:id/change-request
+    async requestTaskChange(id, data) {
+        return this.request(`/tasks/${id}/change-request`, {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    // 任务变更评审（通过/驳回）- POST /api/tasks/:id/change-review
+    async reviewTaskChange(id, data) {
+        return this.request(`/tasks/${id}/change-review`, {
+            method: 'POST',
+            body: JSON.stringify(data),
         });
     }
 
@@ -225,6 +243,21 @@ class ApiClient {
     async deleteMember(id) {
         return this.request(`/members/${id}`, {
             method: 'DELETE',
+        });
+    }
+
+    // 管理员重置成员密码（按 邮箱@前缀+Yj1018! 规则，后端持久化）
+    async resetMemberPassword(id) {
+        return this.request(`/members/${id}/reset-password`, {
+            method: 'PUT',
+        });
+    }
+
+    // 当前用户修改密码：后端 /auth/change-password 校验原密码 + 复杂度（S2），前端不持有明文
+    async changePassword(oldPassword, newPassword) {
+        return this.request('/auth/change-password', {
+            method: 'POST',
+            body: JSON.stringify({ oldPassword, newPassword }),
         });
     }
 
@@ -486,42 +519,44 @@ class ApiClient {
         });
     }
 
+    // 邮箱密码登录：成功后后端种 workbench_session HttpOnly cookie
+    async login(email, password) {
+        const response = await fetch(`${this.baseURL}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Workbench': '1' },
+            credentials: 'include',
+            body: JSON.stringify({ email, password }),
+        });
+        if (!response.ok) {
+            let message = `HTTP ${response.status}: ${response.statusText}`;
+            try {
+                const data = await response.json();
+                if (data && data.error) message = data.error;
+            } catch (e) { /* ignore */ }
+            throw new Error(message);
+        }
+        return await response.json();
+    }
+
+    // 登出：通知后端撤销会话并清 cookie
+    async logout() {
+        try {
+            const response = await fetch(`${this.baseURL}/auth/logout`, {
+                method: 'POST',
+                headers: { 'X-Workbench': '1' },
+                credentials: 'include',
+            });
+            return await response.json();
+        } catch {
+            return { success: false };
+        }
+    }
+
     // ===== SSO 单点登录 =====
-    // 用轻流通知链接中的 u/exp/sig 兑换一次性 ticket（仅用于 SSO 流程，不走 x-user-id 头）
-    async ssoExchange(u, exp, sig) {
-        const qs = `?u=${encodeURIComponent(u)}&exp=${encodeURIComponent(exp)}&sig=${encodeURIComponent(sig)}`;
-        // 注意：ssoExchange 时 currentUserId 尚未设置，不能带 x-user-id 头
-        const url = `${this.baseURL}/auth/sso${qs}`;
-        const response = await fetch(url, { method: 'GET' });
-        if (!response.ok) {
-            let message = `HTTP ${response.status}: ${response.statusText}`;
-            try {
-                const data = await response.json();
-                if (data && data.error) message = data.error;
-            } catch (e) { /* ignore */ }
-            throw new Error(message);
-        }
-        return await response.json();
-    }
-
-    // 用 ticket 校验有效性，返回 userId/email
-    async ssoValidate(ticket) {
-        const url = `${this.baseURL}/auth/me?ticket=${encodeURIComponent(ticket)}`;
-        const response = await fetch(url, { method: 'GET' });
-        if (!response.ok) {
-            let message = `HTTP ${response.status}: ${response.statusText}`;
-            try {
-                const data = await response.json();
-                if (data && data.error) message = data.error;
-            } catch (e) { /* ignore */ }
-            throw new Error(message);
-        }
-        return await response.json();
-    }
-
     // 消费 HttpOnly Cookie 中的一次性 ticket（SSO 302 后由浏览器自动携带，无需在 URL 传参）
+    // 成功后后端种 workbench_session 会话 cookie，后续 API 请求自动携带
     async ssoConsume() {
-        const response = await fetch(`${this.baseURL}/auth/me`, { method: 'GET' });
+        const response = await fetch(`${this.baseURL}/auth/me`, { method: 'GET', headers: { 'X-Workbench': '1' }, credentials: 'include' });
         if (!response.ok) {
             let message = `HTTP ${response.status}: ${response.statusText}`;
             try {
@@ -531,6 +566,96 @@ class ApiClient {
             throw new Error(message);
         }
         return await response.json();
+    }
+
+    // ===== 项目群聊（即时通讯）=====
+    // 说明：SSE 长连接不走本封装（EventSource 无法自定义请求头），由 useChatRealtime 直接建立。
+
+    // 当前用户的全部群（含未读、最后一条消息）
+    async getChatConversations() {
+        return this.request('/chat/conversations');
+    }
+
+    // 分页拉历史消息（不传 before 取最近 limit 条，返回 { messages, hasMore }，升序）
+    async getChatMessages(projectId, { before, limit } = {}) {
+        const params = new URLSearchParams();
+        if (before) params.set('before', before);
+        if (limit) params.set('limit', String(limit));
+        const qs = params.toString();
+        return this.request(`/chat/projects/${encodeURIComponent(projectId)}/messages${qs ? `?${qs}` : ''}`);
+    }
+
+    // 发送消息：body { content, mentions, replyToId }；返回新消息对象
+    async sendChatMessage(projectId, { content, mentions, replyToId } = {}) {
+        return this.request(`/chat/projects/${encodeURIComponent(projectId)}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ content, mentions, replyToId }),
+        });
+    }
+
+    // 标记已读：更新指定群的已读游标
+    async markChatRead(projectId, lastReadAt) {
+        return this.request(`/chat/projects/${encodeURIComponent(projectId)}/read`, {
+            method: 'PUT',
+            body: JSON.stringify({ lastReadAt }),
+        });
+    }
+
+    // 未读汇总：{ total, byProject, mentionByProject }
+    async getChatUnread() {
+        return this.request('/chat/unread');
+    }
+
+    // 撤回消息（发送者本人或 admin，5 分钟内）
+    async recallChatMessage(messageId) {
+        return this.request(`/chat/messages/${encodeURIComponent(messageId)}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // ===== 单聊（V2）=====
+    // 说明：单聊同样走 /api/chat 前缀，SSE 复用 /chat/stream 长连接（dmessage/drecall 事件）。
+
+    // 当前用户的单聊会话列表（含未读与最后一条消息）
+    // project 可选：传了按项目过滤，不传返回全部（含旧数据 null 桶）
+    async getDirectConversations(project) {
+        const qs = project ? `?project=${encodeURIComponent(project)}` : '';
+        return this.request(`/chat/directs${qs}`);
+    }
+
+    // 分页拉单聊历史（双向，返回 { messages, hasMore }，升序）
+    // project 可选：传了按项目过滤，不传返回该 peer 全量（旧数据兜底，不 404）
+    async getDirectMessages(peerId, { before, limit, project } = {}) {
+        const params = new URLSearchParams();
+        if (before) params.set('before', before);
+        if (limit) params.set('limit', String(limit));
+        if (project) params.set('project', project);
+        const qs = params.toString();
+        return this.request(`/chat/directs/${encodeURIComponent(peerId)}/messages${qs ? `?${qs}` : ''}`);
+    }
+
+    // 发送单聊消息：body { content, replyToId, projectId }；projectId 必填（项目隔离维度）
+    // 返回新消息对象（自动带 projectId）
+    async sendDirectMessage(peerId, { content, replyToId, projectId } = {}) {
+        return this.request(`/chat/directs/${encodeURIComponent(peerId)}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ content, replyToId, projectId }),
+        });
+    }
+
+    // 标记单聊已读：更新指定对方在指定项目下的已读游标（三元组 userId+peerId+projectId）
+    async markDirectRead(peerId, lastReadAt, projectId) {
+        return this.request(`/chat/directs/${encodeURIComponent(peerId)}/read`, {
+            method: 'PUT',
+            body: JSON.stringify({ lastReadAt, projectId }),
+        });
+    }
+
+    // 撤回单聊消息（发送者本人或 admin，5 分钟内）
+    async recallDirectMessage(messageId) {
+        return this.request(`/chat/directs/messages/${encodeURIComponent(messageId)}`, {
+            method: 'DELETE',
+        });
     }
 }
 

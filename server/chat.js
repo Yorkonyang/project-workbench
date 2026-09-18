@@ -13,11 +13,14 @@
  *   GET    /api/chat/unread
  *   GET    /api/chat/stream          （SSE，GET 无需 X-Workbench 头）
  *   DELETE /api/chat/messages/:id    （撤回）
- *   GET    /api/chat/directs                       （V2 单聊会话列表）
- *   GET    /api/chat/directs/:peerId/messages       （V2 单聊历史）
- *   POST   /api/chat/directs/:peerId/messages        （V2 单聊发送）
- *   PUT    /api/chat/directs/:peerId/read            （V2 单聊标记已读）
- *   DELETE /api/chat/directs/messages/:id            （V2 单聊撤回）
+ *   GET    /api/chat/directs                       （V2 单聊会话列表；可选 ?project=<id> 按项目过滤）
+ *   GET    /api/chat/directs/:peerId/messages       （V2 单聊历史；?project=<id> 按项目过滤，不传返回全量）
+ *   POST   /api/chat/directs/:peerId/messages        （V2 单聊发送；body 必填 projectId）
+ *   PUT    /api/chat/directs/:peerId/read            （V2 单聊标记已读；body 必填 projectId）
+ *   DELETE /api/chat/directs/messages/:id            （V2 单聊撤回；drecall payload 带 projectId）
+ *
+ * 单聊「按项目隔离」：消息/游标以 (peerId, projectId) 复合 key 组织，projectId 表示「在哪个项目下」。
+ * 存量无 projectId 的消息归入 null 桶，惰性兼容、不做破坏性迁移。
  */
 
 /**
@@ -165,54 +168,76 @@ function memberById(data, id) {
 }
 
 /**
- * 取与某成员双向的全部单聊消息，按 createdAt 升序（不修改入参）。
+ * 取与某成员双向的单聊消息，按 createdAt 升序（不修改入参）。
  * @param {object} data
  * @param {string} me 当前用户 id
  * @param {string} peerId 对方 id
+ * @param {string|null} projectId 项目维度；null=全部（不区分项目），否则仅取该项目下的消息
  * @returns {object[]}
  */
-function directMessagesBetween(data, me, peerId) {
+function directMessagesBetween(data, me, peerId, projectId = null) {
     return (data.chatDirectMessages || [])
         .filter(
             (m) =>
                 (String(m.fromId) === String(me) && String(m.toId) === String(peerId)) ||
                 (String(m.fromId) === String(peerId) && String(m.toId) === String(me))
         )
+        // projectId 维度过滤：传了只留该项目下；不传全部（含存量无 projectId 的旧消息）
+        .filter(
+            (m) => projectId == null || String(m.projectId || null) === String(projectId)
+        )
         .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 }
 
 /**
- * 计算某用户对某成员的单聊未读数：双方对话中「对方发送 + 未撤回 + 晚于已读游标」的消息数。
+ * 计算某用户对某成员（在指定项目下）的单聊未读数：
+ * 双方对话中「对方发送 + 未撤回 + 晚于已读游标 + 项目匹配」的消息数。
+ * @param {object} data
+ * @param {string} userId
+ * @param {string} peerId
+ * @param {string|null} projectId null=不限定项目（兜底全量），否则仅该项目
  * @returns {number}
  */
-function countDirectUnread(data, userId, peerId) {
+function countDirectUnread(data, userId, peerId, projectId = null) {
     const reads = data.chatDirectReads || [];
-    const cursor = reads.find((r) => String(r.userId) === String(userId) && String(r.peerId) === String(peerId));
+    const cursor = reads.find(
+        (r) =>
+            String(r.userId) === String(userId) &&
+            String(r.peerId) === String(peerId) &&
+            (projectId == null ? (r.projectId == null) : String(r.projectId || null) === String(projectId))
+    );
     const since = cursor && cursor.lastReadAt ? new Date(cursor.lastReadAt).getTime() : 0;
     return (data.chatDirectMessages || []).filter(
         (m) =>
             String(m.fromId) === String(peerId) &&
             String(m.toId) === String(userId) &&
             !m.recalled &&
+            (projectId == null || String(m.projectId || null) === String(projectId)) &&
             new Date(m.createdAt).getTime() > since
     ).length;
 }
 
 /**
  * 计算全部单聊未读之和（用于 unread.total）。
- * 仅统计「对方发给我（toId=我 且 fromId≠我）且未撤回且晚于已读游标」的消息。
+ * 仅统计「对方发给我（toId=我 且 fromId≠我）且未撤回且晚于已读游标」的消息，
+ * 按 (fromId, projectId) 维度聚合：游标三元组 (userId, peerId, projectId)，与消息 projectId 对齐。
  */
 function countAllDirectUnread(data, userId) {
-    const cursorByPeer = {};
+    // key: `${fromId}#${projectIdOrEmpty}` -> cursor ms
+    const cursorBy = {};
     for (const r of (data.chatDirectReads || [])) {
         if (String(r.userId) === String(userId)) {
-            cursorByPeer[String(r.peerId)] = new Date(r.lastReadAt || 0).getTime();
+            const k = `${String(r.peerId)}#${r.projectId == null ? '' : String(r.projectId)}`;
+            const t = new Date(r.lastReadAt || 0).getTime();
+            const existing = cursorBy[k];
+            cursorBy[k] = existing == null ? t : Math.max(existing, t);
         }
     }
     let total = 0;
     for (const m of (data.chatDirectMessages || [])) {
         if (String(m.toId) !== String(userId) || String(m.fromId) === String(userId) || m.recalled) continue;
-        const since = cursorByPeer[String(m.fromId)] || 0;
+        const k = `${String(m.fromId)}#${m.projectId == null ? '' : String(m.projectId)}`;
+        const since = cursorBy[k] || 0;
         if (new Date(m.createdAt).getTime() > since) total += 1;
     }
     return total;
@@ -220,34 +245,42 @@ function countAllDirectUnread(data, userId) {
 
 /**
  * 按当前用户推导单聊会话列表：取与我相关（fromId=me 或 toId=me）的消息，
- * 按对方分组，返回 [{ peerId, peerName, peerAvatarColor, lastMessage, lastMessageAt, unreadCount }]，倒序。
+ * 按 (peerId, projectId) 复合 key 分组，返回
+ * [{ peerId, peerName, peerAvatarColor, projectId, lastMessage, lastMessageAt, unreadCount }]，倒序。
  * 对方已删除则跳过该组。peerName/peerAvatarColor 从 members 实时取。
+ * @param {object} data
+ * @param {string} userId
+ * @param {string|null} projectId 可选项目过滤：传了仅返回该项目下会话（旧消息缺 projectId 归 null 桶，不命中）；不传返回全部
  * @returns {object[]}
  */
-function buildDirectConversations(data, userId, ac) {
-    const byPeer = new Map();
+function buildDirectConversations(data, userId, projectId = null) {
+    const byPeer = new Map(); // key: `${peerId}#${projectIdOrEmpty}`
     for (const m of (data.chatDirectMessages || [])) {
+        const mProj = m.projectId == null ? null : String(m.projectId);
+        // 项目维度过滤：传了 project 只留该项目；不传全量（含 null 桶旧数据）
+        if (projectId != null && mProj !== String(projectId)) continue;
         let peerId = null;
         if (String(m.fromId) === String(userId)) peerId = m.toId;
         else if (String(m.toId) === String(userId)) peerId = m.fromId;
         if (!peerId) continue;
-        const key = String(peerId);
+        const key = `${String(peerId)}#${mProj == null ? '' : mProj}`;
         const prev = byPeer.get(key);
         if (!prev || new Date(m.createdAt).getTime() > new Date(prev.lastMessageAt || 0).getTime()) {
-            byPeer.set(key, { peerId: key, lastMessage: m, lastMessageAt: m.createdAt });
+            byPeer.set(key, { peerId: String(peerId), projectId: mProj, lastMessage: m, lastMessageAt: m.createdAt });
         }
     }
     const list = [];
-    for (const { peerId, lastMessage, lastMessageAt } of byPeer.values()) {
+    for (const { peerId, projectId: pProj, lastMessage, lastMessageAt } of byPeer.values()) {
         const peer = memberById(data, peerId);
         if (!peer) continue; // 对方已删除则跳过该组
         list.push({
             peerId: peer.id,
             peerName: peer.name,
             peerAvatarColor: peer.avatarColor,
+            projectId: pProj, // 旧消息缺 projectId 归 null 桶
             lastMessage,
             lastMessageAt,
-            unreadCount: countDirectUnread(data, userId, peerId),
+            unreadCount: countDirectUnread(data, userId, peerId, pProj),
         });
     }
     list.sort((a, b) => new Date(b.lastMessageAt || 0).getTime() - new Date(a.lastMessageAt || 0).getTime());
@@ -580,7 +613,7 @@ function handleUnread(res, ctx, userId) {
     const projects = ac.visibleProjects(data, userId).filter((p) => p.archived !== 1);
     const byProject = {};
     const mentionByProject = {};
-    const byPeer = {}; // V2：单聊未读，按对方 id
+    const byPeer = {}; // V2：单聊未读，flat key `${peerId}#${projectId}`（旧消息缺 projectId 归 `${peerId}#`）
     let projectTotal = 0;
     for (const p of projects) {
         const u = countUnread(data, userId, p.id);
@@ -588,14 +621,20 @@ function handleUnread(res, ctx, userId) {
         const mc = countMentionUnread(data, userId, p.id);
         if (mc > 0) mentionByProject[p.id] = mc;
     }
-    // V2 单聊未读：按对方聚合，并累计到 total
+    // V2 单聊未读：按 (peerId, projectId) 复合维度聚合，并累计到 total
     let directTotal = 0;
+    const seenFrom = new Set();
     for (const m of (data.chatDirectMessages || [])) {
         if (String(m.toId) !== String(userId) || String(m.fromId) === String(userId) || m.recalled) continue;
-        const u = countDirectUnread(data, userId, m.fromId);
-        if (u > 0) { byPeer[String(m.fromId)] = u; }
+        const pProj = m.projectId == null ? null : String(m.projectId);
+        const key = `${String(m.fromId)}#${pProj == null ? '' : pProj}`;
+        // 同 (fromId, projectId) 多消息只计一次未读游标
+        if (seenFrom.has(key)) continue;
+        seenFrom.add(key);
+        const u = countDirectUnread(data, userId, m.fromId, pProj);
+        if (u > 0) { byPeer[key] = u; }
     }
-    // 去重累计：同一 fromId 多消息只计一次未读游标，故用 byPeer 求和
+    // 去重累计：byPeer 已按复合 key 去重，直接求和
     directTotal = Object.values(byPeer).reduce((a, b) => a + b, 0);
     const total = projectTotal + directTotal;
     sendResponse(res, 200, { total, byProject, mentionByProject, directTotal, byPeer });
@@ -666,16 +705,26 @@ function handleRecall(res, ctx, userId, messageId) {
 
 /**
  * GET /api/chat/directs —— 当前用户单聊会话列表（含未读与最后一条消息）。
+ * 可选 ?project=<id>：传了仅返回该项目下的单聊会话，不传返回全部（含旧数据 null 桶）。
  */
-function handleDirectConversations(res, ctx, userId) {
+function handleDirectConversations(res, ctx, userId, url) {
     const data = ensureCollections(ctx.loadData());
-    const { ac, sendResponse } = ctx;
-    const list = buildDirectConversations(data, userId, ac);
+    const { sendResponse } = ctx;
+    const projectParam = url.searchParams.get('project');
+    let projectId = null;
+    if (projectParam) {
+        // 校验项目存在（非法 → 400）；不存在项目时返回空列表而非 404，保持旧 URL 兼容
+        const project = (data.projects || []).find((p) => p.id === projectParam);
+        if (!project) { projectId = null; }
+        else { projectId = projectParam; }
+    }
+    const list = buildDirectConversations(data, userId, projectId);
     sendResponse(res, 200, list);
 }
 
 /**
  * GET /api/chat/directs/:peerId/messages —— 与某成员的历史消息（双向），升序 { messages, hasMore }。
+ * 可选 ?project=<id>：传了按项目过滤，不传返回该 peer 全量（旧数据兜底，不 404）。
  */
 function handleGetDirectMessages(res, ctx, userId, peerId, url) {
     const data = ensureCollections(ctx.loadData());
@@ -686,8 +735,11 @@ function handleGetDirectMessages(res, ctx, userId, peerId, url) {
     const rawLimit = parseInt(url.searchParams.get('limit'), 10);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 200) : DEFAULT_PAGE_SIZE;
     const before = url.searchParams.get('before');
+    // ?project= 维度：传了按项目过滤；不传返回全量（含旧数据）
+    const projectParam = url.searchParams.get('project');
+    const projectId = projectParam ? projectParam : null;
 
-    const all = directMessagesBetween(data, userId, peerId);
+    const all = directMessagesBetween(data, userId, peerId, projectId);
 
     let slice;
     if (before) {
@@ -707,8 +759,10 @@ function handleGetDirectMessages(res, ctx, userId, peerId, url) {
 }
 
 /**
- * POST /api/chat/directs/:peerId/messages —— 发单聊消息。
- * 校验：peer 必须是真实成员且 ≠ 自己；副作用：站内通知（chat_direct，含 5 分钟聚合）+ SSE 'dmessage'。
+ * POST /api/chat/directs/:peerId/messages —— 发单聊消息（按项目隔离）。
+ * 校验：body 必填 projectId；项目必须存在（非法 → 400）；canChat 当前用户对该项目有访问权（→ 403）；
+ *      peer 必须 ∈ 该项目成员集合（复用群聊那套 canChat + projectMemberIds，否则 → 403）。
+ * 副作用：站内通知（chat_direct，含 5 分钟聚合）+ SSE 'dmessage'（完整 message 自动带 projectId）。
  * 严禁调用 qingflow / BPM。
  */
 async function handlePostDirectMessage(req, res, ctx, userId, peerId) {
@@ -723,6 +777,17 @@ async function handlePostDirectMessage(req, res, ctx, userId, peerId) {
     const body = await parseBody(req);
     if (body && body.__tooLarge) { sendResponse(res, 413, { error: '消息体过大' }); return; }
 
+    // projectId 必填（项目隔离维度）
+    const projectId = body && body.projectId ? String(body.projectId) : '';
+    if (!projectId) { sendResponse(res, 400, { error: '缺少 projectId，无法按项目发送单聊' }); return; }
+    const project = (data.projects || []).find((p) => p.id === projectId);
+    if (!project) { sendResponse(res, 400, { error: '项目不存在' }); return; }
+    // 当前用户须能访问该项目（群聊那套 canChat）
+    if (!canChat(data, userId, projectId, ac)) { sendResponse(res, 403, { error: '无权访问该项目群聊' }); return; }
+    // peer 必须 ∈ 该项目成员集合（复用 projectMemberIds）
+    const memberIds = projectMemberIds(data, projectId);
+    if (!memberIds.includes(String(peerId))) { sendResponse(res, 403, { error: '对方不是该项目成员' }); return; }
+
     let content = String((body && body.content) || '').trim();
     if (!content) { sendResponse(res, 400, { error: '消息内容不能为空' }); return; }
     if (content.length > MAX_CONTENT_LENGTH) content = content.slice(0, MAX_CONTENT_LENGTH);
@@ -731,13 +796,14 @@ async function handlePostDirectMessage(req, res, ctx, userId, peerId) {
     const nowIso = new Date().toISOString();
     const toId = String(peerId);
 
-    // 引用回复快照：replyToId 必须是双方之间（fromId/toId 覆盖双方）已有消息
+    // 引用回复快照：replyToId 必须是双方之间（fromId/toId 覆盖双方）且同项目已有消息
     let replyTo = null;
     const replyToId = body && body.replyToId;
     if (replyToId) {
         const target = (data.chatDirectMessages || []).find(
             (m) =>
                 m.id === replyToId &&
+                String(m.projectId) === String(projectId) &&
                 ((String(m.fromId) === String(userId) && String(m.toId) === toId) ||
                     (String(m.fromId) === toId && String(m.toId) === String(userId)))
         );
@@ -754,6 +820,7 @@ async function handlePostDirectMessage(req, res, ctx, userId, peerId) {
         id: generateId(),
         fromId: String(userId),
         toId,
+        projectId,
         senderName,
         content,
         replyTo,
@@ -789,7 +856,7 @@ async function handlePostDirectMessage(req, res, ctx, userId, peerId) {
             read: 0,
             relatedId: String(userId),
             relatedType: 'chat_direct',
-            link: `/messages?peer=${String(userId)}`,
+            link: `/messages?peer=${String(userId)}&project=${encodeURIComponent(projectId)}`,
             created_at: nowIso,
             chatCount: 1,
         });
@@ -805,7 +872,8 @@ async function handlePostDirectMessage(req, res, ctx, userId, peerId) {
 }
 
 /**
- * PUT /api/chat/directs/:peerId/read —— 标记单聊已读（更新游标）。
+ * PUT /api/chat/directs/:peerId/read —— 标记单聊已读（游标按 (userId, peerId, projectId) 三元组写）。
+ * body 需带 projectId；旧前端不带时按 null 桶写（兼容，不报错）。
  */
 async function handleMarkDirectRead(req, res, ctx, userId, peerId) {
     const data = ensureCollections(ctx.loadData());
@@ -821,14 +889,29 @@ async function handleMarkDirectRead(req, res, ctx, userId, peerId) {
     } else {
         lastReadAt = new Date().toISOString();
     }
+    // 游标项目维度：新前端带 projectId；旧前端不带则归 null 桶（兼容）
+    const readProjectId = body && body.projectId != null && String(body.projectId) !== ''
+        ? String(body.projectId)
+        : null;
 
     const rec = (data.chatDirectReads || []).find(
-        (r) => String(r.userId) === String(userId) && String(r.peerId) === String(peerId)
+        (r) =>
+            String(r.userId) === String(userId) &&
+            String(r.peerId) === String(peerId) &&
+            (readProjectId == null
+                ? (r.projectId == null)
+                : String(r.projectId || null) === readProjectId)
     );
     if (rec) {
         rec.lastReadAt = lastReadAt;
     } else {
-        data.chatDirectReads.push({ id: generateId(), userId: String(userId), peerId: String(peerId), lastReadAt });
+        data.chatDirectReads.push({
+            id: generateId(),
+            userId: String(userId),
+            peerId: String(peerId),
+            projectId: readProjectId,
+            lastReadAt,
+        });
     }
     saveData(data);
     sendResponse(res, 200, { success: true, lastReadAt });
@@ -836,7 +919,7 @@ async function handleMarkDirectRead(req, res, ctx, userId, peerId) {
 
 /**
  * DELETE /api/chat/directs/messages/:id —— 撤回单聊消息（发送者本人或 admin，5 分钟内）。
- * 广播 'drecall' 给双方（含发送者，多端同步）。
+ * 广播 'drecall' 给双方（含发送者，多端同步），payload 带该消息 projectId。
  */
 function handleRecallDirect(res, ctx, userId, messageId) {
     const data = ensureCollections(ctx.loadData());
@@ -856,9 +939,14 @@ function handleRecallDirect(res, ctx, userId, messageId) {
     // replyTo 保留（设计：撤回仅清空内容，引用快照保留）
     saveData(data);
 
-    // 广播给双方（去重），含发送者便于多端同步
+    // 广播给双方（去重），含发送者便于多端同步；payload 带 projectId 供前端按项目定位
     const targets = [...new Set([String(msg.fromId), String(msg.toId)])];
-    broadcast(targets, 'drecall', { id: msg.id, fromId: String(msg.fromId), toId: String(msg.toId) });
+    broadcast(targets, 'drecall', {
+        id: msg.id,
+        fromId: String(msg.fromId),
+        toId: String(msg.toId),
+        projectId: msg.projectId == null ? null : String(msg.projectId),
+    });
     sendResponse(res, 200, msg);
 }
 
@@ -901,7 +989,7 @@ async function handle(req, res, ctx) {
 
         // ---- V2 单聊路由 ----
         if (pathname === `${CHAT_PREFIX}/directs` && method === 'GET') {
-            handleDirectConversations(res, ctx, userId);
+            handleDirectConversations(res, ctx, userId, url);
             return true;
         }
 

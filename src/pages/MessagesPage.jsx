@@ -13,7 +13,7 @@ import EmptyState from '@/components/ui/EmptyState';
 import ChatWindow from '@/components/chat/ChatWindow';
 import { cn } from '@/lib/utils';
 import { pinyinMatch } from '@/lib/pinyinMatch';
-import { useChatStore } from '@/store/useChatStore';
+import { useChatStore, peerKey } from '@/store/useChatStore';
 import { useMemberStore } from '@/store/useMemberStore';
 import { useAuthStore } from '@/store/useAuthStore';
 
@@ -43,6 +43,7 @@ export default function MessagesPage() {
   const error = useChatStore((s) => s.conversationsError);
   const activeProjectId = useChatStore((s) => s.activeProjectId);
   const activePeerId = useChatStore((s) => s.activePeerId);
+  const activePeerProjectId = useChatStore((s) => s.activePeerProjectId);
   const unreadByProject = useChatStore((s) => s.unreadByProject);
   const unreadByPeer = useChatStore((s) => s.unreadByPeer);
   const directConversations = useChatStore((s) => s.directConversations);
@@ -64,31 +65,36 @@ export default function MessagesPage() {
     fetchDirectConversations();
   }, [fetchConversations, fetchUnread, fetchDirectConversations]);
 
-  // URL 参数定位会话
+  // URL 参数定位会话（?peer= 单聊必带 ?project= 项目维度；?project= 定位群聊）
   useEffect(() => {
     const pid = searchParams.get('project');
     const peer = searchParams.get('peer');
     if (peer) {
-      if (peer !== activePeerId) openPeer(peer);
+      // peer 打开：项目维度取自 URL project 参数（无则 null 全量桶）
+      const openPeerKey = peerKey(peer, pid);
+      const activeKey = peerKey(activePeerId, activePeerProjectId);
+      if (openPeerKey !== activeKey) openPeer(peer, pid);
     } else if (pid && pid !== activeProjectId) {
       openProject(pid);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  // 单聊未读快照：peerId -> unreadCount（合并会话列表与 byPeer）
+  // 单聊未读快照：`${peerId}#${projectId}` -> unreadCount（复合 key，合并会话列表与 byPeer）
   const directUnreadMap = useMemo(() => {
     const map = {};
     // 自己不是"对方"：显式排除 currentUserId 名下，杜绝"自己发给自己的消息"计为未读
     const selfKey = currentUserId ? String(currentUserId) : '';
     (directConversations || []).forEach((c) => {
       if (!c.peerId || String(c.peerId) === selfKey) return;
-      map[c.peerId] = c.unreadCount || 0;
+      const k = peerKey(c.peerId, c.projectId);
+      map[k] = (map[k] || 0) + (c.unreadCount || 0);
     });
-    // byPeer（后端实时未读）优先覆盖
-    Object.keys(unreadByPeer || {}).forEach((pid) => {
-      if (selfKey && String(pid) === selfKey) return;
-      map[pid] = unreadByPeer[pid] || 0;
+    // byPeer（后端实时未读，已按复合 key）优先覆盖
+    Object.keys(unreadByPeer || {}).forEach((k) => {
+      const peerPart = k.split('#')[0];
+      if (selfKey && peerPart === selfKey) return;
+      map[k] = unreadByPeer[k] || 0;
     });
     return map;
   }, [directConversations, unreadByPeer, currentUserId]);
@@ -122,10 +128,11 @@ export default function MessagesPage() {
     setSearchParams({ project: pid });
   };
 
+  // 单聊选中：传入项目维度 pid（"在哪个项目下"），URL 同时带 ?peer= 与 ?project=
   const handleSelectPeer = (pid, peerId) => {
-    openPeer(peerId);
+    openPeer(peerId, pid);
     closeProject();
-    setSearchParams({ peer: peerId });
+    setSearchParams({ peer: peerId, project: pid });
   };
 
   const handleBack = () => {
@@ -135,7 +142,8 @@ export default function MessagesPage() {
   };
 
   const chatMode = activePeerId ? 'direct' : 'project';
-  const chatProjectId = activePeerId ? null : activeProjectId;
+  // 单聊模式下也带项目维度：chatProjectId 在 direct 模式下 = 当前单聊所在项目
+  const chatProjectId = activePeerId ? activePeerProjectId : activeProjectId;
 
   return (
     <PageContainer>
@@ -238,11 +246,12 @@ export default function MessagesPage() {
                           <div className="px-4 py-2 text-xs text-slate-400">暂无其他成员</div>
                         ) : (
                           members.map((m) => {
-                            const pu = directUnreadMap[m.id] || 0;
-                            const isActivePeer = activePeerId === m.id;
+                            const pu = directUnreadMap[peerKey(m.id, c.projectId)] || 0;
+                            const isActivePeer =
+                              activePeerId === m.id && activePeerProjectId === c.projectId;
                             return (
                               <button
-                                key={m.id}
+                                key={peerKey(m.id, c.projectId)}
                                 type="button"
                                 onClick={() => handleSelectPeer(c.projectId, m.id)}
                                 className={cn(
@@ -297,6 +306,7 @@ export default function MessagesPage() {
                   mode={chatMode}
                   projectId={chatProjectId}
                   peerId={activePeerId}
+                  peerProjectId={activePeerId ? activePeerProjectId : undefined}
                   height="100%"
                 />
               </div>
