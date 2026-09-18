@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 // 用户要求 待办/评审中/已完成/已阻塞 也按此逻辑展示（与「进行中」一致）。
 const KANBAN_PROGRESS_STATUSES = new Set(['todo', 'in_progress', 'review', 'done', 'blocked']);
 
-export default function TaskKanban({ tasks, onTaskClick, projectFilter, onEdit, onDelete, onProgress }) {
+export default function TaskKanban({ tasks, onTaskClick, projectFilter, onEdit, onDelete, onProgress, onAbolish }) {
   const updateTask = useTaskStore((s) => s.updateTask);
   const reorderTasks = useTaskStore((s) => s.reorderTasks);
   const allTasks = useTaskStore((s) => s.tasks);
@@ -124,6 +124,7 @@ export default function TaskKanban({ tasks, onTaskClick, projectFilter, onEdit, 
                               onEdit={onEdit}
                               onDelete={onDelete}
                               onProgress={onProgress}
+                              onAbolish={onAbolish}
                               isArchived={isArchived}
                               bgClass={theme?.rowBg}
                               borderClass={theme?.border}

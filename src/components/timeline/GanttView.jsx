@@ -258,6 +258,14 @@ export default function GanttView({ tasks, milestones, projects }) {
             <span className="w-10 h-2.5 bg-red-500 rounded"></span>
             <span className="text-slate-500">超期</span>
           </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-0.5 h-4 bg-blue-500"></span>
+            <span className="text-slate-500">计划变更</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-10 h-2.5 bg-slate-500 rounded"></span>
+            <span className="text-slate-500">已废止</span>
+          </div>
         </div>
       </div>
 
@@ -435,7 +443,8 @@ export default function GanttView({ tasks, milestones, projects }) {
                           style={{ left: todayPosition + dayWidth / 2 }}
                         />
 
-                        {/* Plan Bar (Light Blue) - 向下增粗 5 倍；里程碑不显示计划线 */}
+                        {/* Plan Bar（计划时间线）- 向下增粗 5 倍；里程碑不显示计划线。
+                            已废止任务：整条计划线变深灰并悬停显示废止原因。 */}
                         {!isMilestone && (
                           <div
                             className="absolute cursor-pointer hover:opacity-100 transition-opacity"
@@ -446,11 +455,40 @@ export default function GanttView({ tasks, milestones, projects }) {
                               height: LINE_W,
                             }}
                             onClick={() => navigate(`/tasks?taskId=${item.id}`)}
-                            title="点击查看任务详情"
+                            title={item.abolished ? `任务已废止：${item.abolishReason || ''}` : '点击查看任务详情'}
                           >
-                            <div className="h-full bg-blue-400 rounded opacity-70" />
+                            <div
+                              className="h-full rounded"
+                              style={{
+                                backgroundColor: item.abolished ? '#6b7280' : '#60a5fa',
+                                opacity: item.abolished ? 1 : 0.7,
+                              }}
+                            />
                           </div>
                         )}
+
+                        {/* 修改计划标记：原计划截止点蓝色小竖线（悬停显示修改原因）。
+                            与「汇报节点」竖线同形，颜色取蓝；已废止任务不再绘制。 */}
+                        {!isMilestone && !item.abolished && (item.modifications || []).map((mod, i) => {
+                          if (!mod.originalDueDate) return null;
+                          const markerX = getPosition(mod.originalDueDate) + dayWidth;
+                          const modTop = PLAN_TOP + LINE_W / 2 - (LINE_W * 1.5) / 2;
+                          return (
+                            <div
+                              key={`mod-${i}`}
+                              className="absolute z-20"
+                              style={{
+                                left: markerX - 1.5,
+                                top: modTop,
+                                width: 3,
+                                height: LINE_W * 1.5,
+                                background: '#3b82f6',
+                                borderRadius: 1,
+                              }}
+                              title={`计划变更：${mod.reason || ''}`}
+                            />
+                          );
+                        })}
 
                         {/* 实际进度线（核心逻辑）：仅任务且已启动 */}
                         {!isMilestone && started && (

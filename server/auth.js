@@ -37,6 +37,42 @@ const SIGNATURE_TTL_S = 30 * 60;
 // 持久化到 data/sso-tickets.json，后端重启后已签发的 ticket 仍有效（不再因重启失效）。
 const ticketStore = loadTickets();
 
+// 会话池：session token → { userId, email, expiresAt }。
+// 邮箱密码登录 / SSO 登录成功后种 HttpOnly cookie，后端用该 token 识别身份，
+// 不再信任客户端发来的裸 x-user-id 头。
+const sessionStore = new Map();
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * 签发会话 token（返回 token 字符串，由调用方写入 HttpOnly cookie）
+ */
+function issueSession(userId, email) {
+    const token = crypto.randomBytes(32).toString('hex');
+    sessionStore.set(token, { userId, email, expiresAt: Date.now() + SESSION_TTL_MS });
+    return { token, expiresAt: sessionStore.get(token).expiresAt };
+}
+
+/**
+ * 从 session token 还原身份；过期/无效返回 null
+ */
+function getSession(token) {
+    if (!token) return null;
+    const entry = sessionStore.get(token);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+        sessionStore.delete(token);
+        return null;
+    }
+    return entry;
+}
+
+/**
+ * 撤销会话（登出时调用）
+ */
+function destroySession(token) {
+    if (token) sessionStore.delete(token);
+}
+
 // 从磁盘加载已持久化的 ticket（跳过过期项，避免无限堆积）
 function loadTickets() {
   try {
@@ -67,11 +103,25 @@ function persistTickets() {
 /**
  * 获取当前生效的 SSO 密钥
  * 优先级：环境变量 > pushConfig.ssoSecret > 内置 dev key
+ *
+ * 安全策略（P1）：
+ *  - 生产（NODE_ENV === 'production'）若未配置 SSO_SECRET 或 pushConfig.ssoSecret，
+ *    直接抛错拒绝启动，防止使用内置 dev key 导致签名可被伪造。
+ *  - 非生产环境仅打印警告，允许使用内置 dev key。
  */
 function getSecret() {
-    return process.env.SSO_SECRET
-        || (require('./qingflow').getPushConfig().ssoSecret)
-        || DEFAULT_SSO_SECRET;
+    const envSecret = process.env.SSO_SECRET;
+    const cfgSecret = require('./qingflow').getPushConfig().ssoSecret;
+    if (envSecret) return envSecret;
+    if (cfgSecret) return cfgSecret;
+    if (process.env.NODE_ENV === 'production') {
+        throw new Error(
+            '[auth] 生产环境必须配置 SSO_SECRET 环境变量或 pushConfig.ssoSecret，' +
+            '禁止使用内置 dev key 启动'
+        );
+    }
+    console.warn('[auth] 警告：正在使用内置 dev SSO 密钥（仅开发环境允许），生产部署请设置 SSO_SECRET 或 pushConfig.ssoSecret');
+    return DEFAULT_SSO_SECRET;
 }
 
 /**
@@ -171,15 +221,33 @@ function signTicket(ticket, exp) {
 /**
  * 验证 ticket + exp 的签名；通过后从 ticketStore 读取 userId/email。
  * 同时校验兜底过期（过期则删除并返回 expired）。本函数不消费 ticket，可多次有效。
+ *
+ * 修补⑤：签名校验失败的 ticket 记录失败次数，连续 5 次失败后删除该 ticket，
+ * 防止攻击者拿到 ticket 后用暴力签名枚举绕过。
  */
+const ticketFailCounts = new Map(); // ticket → 连续失败次数
+const TICKET_MAX_FAILS = 5;
+
 function verifyTicket(ticket, exp, sig) {
     if (!ticket || !exp || !sig) return { ok: false, reason: 'missing_params' };
-    const expected = signTicket(ticket, exp);
+    const secret = getSecret();
+    const expected = crypto.createHmac('sha256', secret).update(`${ticket}|${exp}`).digest('hex');
     const a = Buffer.from(sig, 'hex');
     const b = Buffer.from(expected, 'hex');
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        // 修补⑤：签名失败计数，超限删除 ticket
+        const fails = (ticketFailCounts.get(ticket) || 0) + 1;
+        ticketFailCounts.set(ticket, fails);
+        if (fails >= TICKET_MAX_FAILS) {
+            ticketStore.delete(ticket);
+            ticketFailCounts.delete(ticket);
+            persistTickets();
+            return { ok: false, reason: 'ticket_blocked' };
+        }
         return { ok: false, reason: 'bad_sig' };
     }
+    // 校验通过，清除失败计数
+    ticketFailCounts.delete(ticket);
     const entry = ticketStore.get(ticket);
     if (!entry) return { ok: false, reason: 'unknown_ticket' };
     if (Date.now() > entry.expiresAt) {
@@ -242,4 +310,8 @@ module.exports = {
     buildTicketUrl,
     getSecret,
     _ticketStoreSize: () => ticketStore.size,
+    // 会话（session token）能力
+    issueSession,
+    getSession,
+    destroySession,
 };

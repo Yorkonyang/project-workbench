@@ -11,6 +11,7 @@ const qingflow = require('./qingflow');
 const ac = require('./accessControl');
 const sso = require('./auth');
 const hierarchy = require('./hierarchy');
+const chat = require('./chat');
 
 const PORT = process.env.PORT || 3000;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../data/workbench.db');
@@ -94,6 +95,11 @@ function loadData() {
         if (!parsed.projectTypes) parsed.projectTypes = [];
         if (!parsed.projectStages) parsed.projectStages = [];
         if (!parsed.projectMerges) parsed.projectMerges = [];
+        if (!parsed.chatMessages) parsed.chatMessages = [];
+        if (!parsed.chatReads) parsed.chatReads = [];
+        // V2 单聊集合兼容补全（仅默认值，chat.js 内也有兜底）
+        if (!parsed.chatDirectMessages) parsed.chatDirectMessages = [];
+        if (!parsed.chatDirectReads) parsed.chatDirectReads = [];
         return parsed;
     } catch (err) {
         return { projects: [], tasks: [], todos: [], members: [], documents: [], notifications: [], risks: [], resources: [], milestones: [], projectMerges: [] };
@@ -120,11 +126,44 @@ function nextSortOrder(items) {
     return max + 1;
 }
 
+// 登录限流（修补④）：按 IP 滑动窗口，每分钟最多 5 次尝试
+const LOGIN_RATE_LIMIT = { windowMs: 60 * 1000, max: 5 };
+const loginAttempts = new Map(); // ip → { count, resetAt }
+function getClientIp(req) {
+    const xff = req.headers['x-forwarded-for'];
+    if (xff) return String(xff).split(',')[0].trim();
+    return req.socket.remoteAddress || 'unknown';
+}
+function checkLoginRateLimit(ip) {
+    const now = Date.now();
+    let entry = loginAttempts.get(ip);
+    if (!entry || now > entry.resetAt) {
+        entry = { count: 0, resetAt: now + LOGIN_RATE_LIMIT.windowMs };
+        loginAttempts.set(ip, entry);
+    }
+    entry.count += 1;
+    // 定期清理过期记录，避免 Map 无限增长
+    if (loginAttempts.size > 1000) {
+        for (const [k, v] of loginAttempts) if (now > v.resetAt) loginAttempts.delete(k);
+    }
+    return entry.count <= LOGIN_RATE_LIMIT.max;
+}
+
 // 解析请求体
+const MAX_BODY_SIZE = 1024 * 1024; // 1 MB
 function parseBody(req) {
     return new Promise((resolve, reject) => {
         let body = '';
-        req.on('data', chunk => { body += chunk.toString(); });
+        let size = 0;
+        req.on('data', chunk => {
+            size += chunk.length;
+            if (size > MAX_BODY_SIZE) {
+                resolve({ __tooLarge: true });
+                req.destroy();
+                return;
+            }
+            body += chunk.toString();
+        });
         req.on('end', () => {
             try {
                 resolve(body ? JSON.parse(body) : {});
@@ -136,26 +175,56 @@ function parseBody(req) {
     });
 }
 
-// 发送响应
+// 修补⑥：CORS 收紧。
+// 同源部署（vite 代理 /api）下无 Origin 头，浏览器默认放行；跨域部署时按 ALLOWED_ORIGIN
+// 白名单（逗号分隔，可用环境变量配置）回显 Origin 并开启 credentials，否则拒绝。
+// 不再用 '*' —— 与 HttpOnly 会话 cookie 配合时 '*' 会导致 cookie 不被发送。
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN || process.env.VITE_API_ORIGIN || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+// 当前处理中的请求（Node 单线程事件循环内安全，便于 sendResponse 取 Origin 而无需改动 165 处调用）
+let currentReq = null;
+
+function corsHeadersFor(req) {
+    const origin = req && req.headers ? req.headers.origin : null;
+    const allowOrigin = origin && ALLOWED_ORIGINS.length > 0 ? (ALLOWED_ORIGINS.includes(origin) ? origin : null) : (origin || null);
+    const headers = {
+        'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept, X-Workbench',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    };
+    if (allowOrigin) {
+        headers['Access-Control-Allow-Origin'] = allowOrigin;
+        headers['Access-Control-Allow-Credentials'] = 'true';
+    }
+    return { headers, rejected: Boolean(origin) && !allowOrigin };
+}
+
+// 发送响应（CORS 头按 currentReq 的 Origin 动态计算）
 function sendResponse(res, statusCode, data) {
+    const { headers } = corsHeadersFor(currentReq);
     res.writeHead(statusCode, {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept, x-user-id, X-User-Id',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Expose-Headers': 'x-user-id, X-User-Id'
+        ...headers,
     });
     res.end(JSON.stringify(data));
 }
 
 // 处理 OPTIONS 预检请求
 function handleOptions(res) {
-    sendResponse(res, 200, {});
+    const { headers, rejected } = corsHeadersFor(currentReq);
+    res.writeHead(rejected ? 403 : 200, {
+        ...(rejected ? {} : { 'Content-Type': 'application/json' }),
+        ...headers,
+    });
+    res.end(rejected ? '' : '{}');
 }
 
 // ==================== 路由处理 ====================
 
 const server = http.createServer(async (req, res) => {
+    currentReq = req; // 修补⑥：供 sendResponse/handleOptions 动态计算 CORS 头
     const url = new URL(req.url, `http://localhost:${PORT}`);
     const pathname = url.pathname;
     const method = req.method;
@@ -163,6 +232,14 @@ const server = http.createServer(async (req, res) => {
     // CORS 预检
     if (method === 'OPTIONS') {
         handleOptions(res);
+        return;
+    }
+
+    // 修补（S5）：CSRF 纵深防御 —— 写请求必须携带自定义头 X-Workbench: 1。
+    // 浏览器自动发起的跨站请求（<form>、<img>、无头 fetch）无法设置自定义请求头，
+    // 因此缺少该头的 POST/PUT/DELETE 一律拒绝；配合 SameSite=Lax Cookie 形成双重防护。
+    if (['POST', 'PUT', 'DELETE'].includes(method) && req.headers['x-workbench'] !== '1') {
+        sendResponse(res, 403, { error: '请求缺少必要的校验头' });
         return;
     }
 
@@ -262,7 +339,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // SSO 校验：GET /api/auth/me?ticket=<ticket> 或 读 cookie sso_ticket
-    // 前端登录后调用此接口确认 ticket 有效，并取得 userId 用于后续 x-user-id 头
+    // 消费一次 SSO ticket → 建立工作区会话（workbench_session），后续请求凭 cookie 鉴权
     if (pathname === '/api/auth/me' && method === 'GET') {
         let ticket = url.searchParams.get('ticket');
         if (!ticket) {
@@ -280,10 +357,108 @@ const server = http.createServer(async (req, res) => {
             sendResponse(res, 401, { error: 'ticket 无效或已使用' });
             return;
         }
+        // 登录成功：种工作区会话 cookie（HttpOnly，客户端 JS 不可读）
+        const session = sso.issueSession(entry.userId, entry.email);
+        res.setHeader(
+            'Set-Cookie',
+            `workbench_session=${session.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.max(
+                1,
+                Math.ceil((session.expiresAt - Date.now()) / 1000)
+            )}`
+        );
         sendResponse(res, 200, {
             userId: entry.userId,
             email: entry.email,
         });
+        return;
+    }
+
+    // 登出：POST /api/auth/logout —— 清会话 cookie
+    if (pathname === '/api/auth/logout' && method === 'POST') {
+        const cookieHeader = req.headers.cookie || '';
+        const m = cookieHeader.match(/(?:^|;\s*)workbench_session=([^;]+)/);
+        if (m) sso.destroySession(decodeURIComponent(m[1]));
+        res.setHeader('Set-Cookie', 'workbench_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
+        sendResponse(res, 200, { success: true });
+        return;
+    }
+
+    // 登录：POST /api/auth/login { email, password } → 校验成员名册 → 种会话 cookie
+    if (pathname === '/api/auth/login' && method === 'POST') {
+        // 修补④：按 IP 限流，每分钟最多 5 次，超限 429
+        const clientIp = getClientIp(req);
+        if (!checkLoginRateLimit(clientIp)) {
+            sendResponse(res, 429, { error: '登录尝试过于频繁，请 1 分钟后再试' });
+            return;
+        }
+        const body = await parseBody(req);
+        const email = String(body.email || '').trim().toLowerCase();
+        const password = String(body.password || '');
+        if (!email || !password) {
+            sendResponse(res, 400, { error: '邮箱和密码不能为空' });
+            return;
+        }
+        const data = loadData();
+        const member = (data.members || []).find(
+            (m) => (m.email || '').toLowerCase() === email && m.password === password
+        );
+        if (!member) {
+            sendResponse(res, 401, { error: '邮箱或密码错误' });
+            return;
+        }
+        const session = sso.issueSession(member.id, member.email);
+        res.setHeader(
+            'Set-Cookie',
+            `workbench_session=${session.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.max(
+                1,
+                Math.ceil((session.expiresAt - Date.now()) / 1000)
+            )}`
+        );
+        sendResponse(res, 200, {
+            success: true,
+            userId: member.id,
+            email: member.email,
+            name: member.name,
+            role: member.role || 'member',
+        });
+        return;
+    }
+
+    // 修改密码：POST /api/auth/change-password { oldPassword, newPassword }
+    // 后端校验原密码 + 强制复杂度，前端不再持有/比对明文（S2）；写请求需 X-Workbench 头（S5）
+    if (pathname === '/api/auth/change-password' && method === 'POST') {
+        const userId = ac.getUserId(req);
+        if (!userId) {
+            sendResponse(res, 401, { error: '未登录' });
+            return;
+        }
+        const body = await parseBody(req);
+        const oldPassword = String(body.oldPassword || '');
+        const newPassword = String(body.newPassword || '');
+        // 复杂度：≥8 位，含大小写字母与数字（M4）
+        if (
+            newPassword.length < 8 ||
+            !/[a-z]/.test(newPassword) ||
+            !/[A-Z]/.test(newPassword) ||
+            !/\d/.test(newPassword)
+        ) {
+            sendResponse(res, 400, { error: '新密码至少8位，且需包含大小写字母和数字' });
+            return;
+        }
+        const data = loadData();
+        const index = data.members.findIndex((m) => m.id === userId);
+        if (index === -1) {
+            sendResponse(res, 404, { error: '用户不存在' });
+            return;
+        }
+        if (data.members[index].password !== oldPassword) {
+            sendResponse(res, 401, { error: '原密码错误' });
+            return;
+        }
+        data.members[index].password = newPassword;
+        data.members[index].updated_at = new Date().toISOString();
+        saveData(data);
+        sendResponse(res, 200, { success: true });
         return;
     }
 
@@ -307,6 +482,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === '/api/qingflow/config' && method === 'POST') {
+        // P0 修复：修改轻流推送配置（含 secret 字段）仅 admin 可执行
+        const data = loadData();
+        const userId = ac.getUserId(req);
+        if (!ac.isAdmin(data, userId)) {
+            sendResponse(res, 403, { error: '仅管理员可修改轻流推送配置' });
+            return;
+        }
         const body = await parseBody(req);
         qingflow.setPushConfig(body);
         sendResponse(res, 200, { success: true, message: '推送配置已更新' });
@@ -315,6 +497,13 @@ const server = http.createServer(async (req, res) => {
 
     // 轻流连接测试（推送）
     if (pathname === '/api/qingflow/test' && method === 'GET') {
+        // P0 修复：连接测试会实际调用第三方接口，仅 admin 可触发
+        const data = loadData();
+        const userId = ac.getUserId(req);
+        if (!ac.isAdmin(data, userId)) {
+            sendResponse(res, 403, { error: '仅管理员可测试轻流连接' });
+            return;
+        }
         const result = await qingflow.testConnection();
         sendResponse(res, result.success ? 200 : 500, result);
         return;
@@ -322,6 +511,13 @@ const server = http.createServer(async (req, res) => {
 
     // 轻流表单数据提交（调试用）
     if (pathname === '/api/qingflow/form-data' && method === 'POST') {
+        // P0 修复：向轻流注入数据仅 admin 可执行
+        const data = loadData();
+        const userId = ac.getUserId(req);
+        if (!ac.isAdmin(data, userId)) {
+            sendResponse(res, 403, { error: '仅管理员可提交轻流表单数据' });
+            return;
+        }
         const body = await parseBody(req);
         const result = await qingflow.addFormData(body);
         sendResponse(res, result.errCode === 0 ? 200 : 400, result);
@@ -335,6 +531,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === '/api/qingflow/sync-config' && method === 'POST') {
+        // P0 修复：修改轻流同步配置（含 client_secret）仅 admin 可执行
+        const data = loadData();
+        const userId = ac.getUserId(req);
+        if (!ac.isAdmin(data, userId)) {
+            sendResponse(res, 403, { error: '仅管理员可修改轻流同步配置' });
+            return;
+        }
         const body = await parseBody(req);
         qingflow.setSyncConfig(body);
         sendResponse(res, 200, { success: true, message: '同步配置已更新' });
@@ -1202,7 +1405,13 @@ const server = http.createServer(async (req, res) => {
 
     // ===== 轻流组织架构同步 =====
     if (pathname === '/api/organization/sync' && method === 'POST') {
+        // P0 修复：轻流组织架构同步（拉取远程用户并写入本地成员名册）仅 admin 可执行
         const data = loadData();
+        const userId = ac.getUserId(req);
+        if (!ac.isAdmin(data, userId)) {
+            sendResponse(res, 403, { error: '仅管理员可同步轻流组织架构' });
+            return;
+        }
         try {
             const result = await qingflow.syncOrganization(data);
             if (result.success) {
@@ -1348,7 +1557,7 @@ const server = http.createServer(async (req, res) => {
                         id: u.id || `mem_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
                         name: name || email.split('@')[0] || '未命名',
                         email,
-                        password: email.split('@')[0] + '123', // 默认密码：邮箱@前部分+123
+                        password: email.split('@')[0] + 'Yj1018!', // 默认密码：邮箱@前部分 + Yj1018!（与重置密码规则一致）
                         phone: u.phone || u.mobile || '',
                         departmentId: deptId || null,
                         role: u.role || 'member',
@@ -1369,63 +1578,6 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    // Members API (legacy simple)
-    if (pathname === '/api/members' && method === 'GET') {
-        const data = loadData();
-        sendResponse(res, 200, data.members);
-        return;
-    }
-
-    if (pathname === '/api/members' && method === 'POST') {
-        const body = await parseBody(req);
-        const data = loadData();
-        const member = {
-            ...body,
-            id: generateId(),
-            role: body.role || 'member',
-            created_at: new Date().toISOString()
-        };
-        data.members.push(member);
-        saveData(data);
-        sendResponse(res, 201, member);
-        return;
-    }
-
-    // Notifications API
-    if (pathname === '/api/notifications' && method === 'GET') {
-        const data = loadData();
-        const userId = url.searchParams.get('userId');
-        const notifications = userId ? data.notifications.filter(n => n.user_id === userId) : data.notifications;
-        sendResponse(res, 200, notifications);
-        return;
-    }
-
-    if (pathname === '/api/notifications' && method === 'POST') {
-        const body = await parseBody(req);
-        const data = loadData();
-        const notification = {
-            ...body,
-            id: generateId(),
-            read: body.read || 0,
-            created_at: new Date().toISOString()
-        };
-        data.notifications.push(notification);
-        saveData(data);
-        sendResponse(res, 201, notification);
-
-        // 逾期/催办通知：异步推送到轻流 Q-Source（不阻塞响应）
-        if (body.type === 'overdue' || body.type === 'escalation') {
-            qingflow.notifyOverdue(notification)
-                .then((result) => {
-                    if (result && !result.success) {
-                        console.warn('[轻流推送] 逾期通知推送失败:', result.error || result.errMsg);
-                    }
-                })
-                .catch((err) => console.error('[轻流推送] 逾期通知推送异常:', err.message));
-        }
-        return;
-    }
-
     // 任务删除 - DELETE /api/tasks/:id
     if (pathname.match(/^\/api\/tasks\/[\w-]+$/) && method === 'DELETE') {
         const id = pathname.split('/').pop();
@@ -1435,6 +1587,13 @@ const server = http.createServer(async (req, res) => {
         if (index !== -1) {
             if (!ac.canManageTask(data, userId, id)) {
                 sendResponse(res, 403, { error: '无权删除该任务' });
+                return;
+            }
+            // 修补：仅「待启动(todo)」任务可删除；任务一旦启动（进行中/评审中/已完成/已阻塞）即锁定，
+            // 防止误删进行中的任务数据（与前端删除按钮门控一致，后端为纵深防御）。
+            const t = data.tasks[index];
+            if (t.status && t.status !== 'todo') {
+                sendResponse(res, 403, { error: '任务已开始执行，不能删除（仅「待启动」状态可删除）' });
                 return;
             }
             data.tasks.splice(index, 1);
@@ -1473,10 +1632,191 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // 任务变更申请（修改计划/废止）- POST /api/tasks/:id/change-request
+    // 「进行中」任务删除被禁止；任务负责人(assignee)或项目负责人可提交修改/废止申请，
+    // 由项目负责人评审通过后生效。写入 task.pendingChange 并通知项目负责人。
+    if (pathname.match(/^\/api\/tasks\/[\w-]+\/change-request$/) && method === 'POST') {
+        const id = pathname.split('/')[3];
+        const body = await parseBody(req);
+        const data = loadData();
+        const userId = ac.getUserId(req);
+        if (!userId) { sendResponse(res, 401, { error: '未登录' }); return; }
+        const index = data.tasks.findIndex(t => t.id === id);
+        if (index === -1) { sendResponse(res, 404, { error: 'Task not found' }); return; }
+        const task = data.tasks[index];
+        if (task.status !== 'in_progress') {
+            sendResponse(res, 400, { error: '仅「进行中」状态的任务可提交修改/废止申请' });
+            return;
+        }
+        if (task.pendingChange) {
+            sendResponse(res, 400, { error: '该任务已有待评审的变更申请' });
+            return;
+        }
+        const type = body.type;
+        if (type !== 'modify' && type !== 'abolish') {
+            sendResponse(res, 400, { error: '无效的变更类型' });
+            return;
+        }
+        // 权限：任务负责人(assignee)或项目负责人可提交
+        const isAssignee = ac.taskAssigneeIncludes(task, userId);
+        const isLead = ac.canManageTask(data, userId, id);
+        if (!isAssignee && !isLead) {
+            sendResponse(res, 403, { error: '仅任务负责人或项目负责人可提交变更申请' });
+            return;
+        }
+        const reason = (body.reason || '').trim();
+        if (!reason) { sendResponse(res, 400, { error: '请填写变更理由' }); return; }
+        let newDueDate = null;
+        if (type === 'modify') {
+            newDueDate = (body.newDueDate || '').trim();
+            if (!newDueDate) { sendResponse(res, 400, { error: '请填写新的计划完成日期' }); return; }
+            // 校验日期格式 + 必须晚于原截止日期
+            const d = new Date(newDueDate + 'T00:00:00');
+            if (isNaN(d.getTime())) {
+                sendResponse(res, 400, { error: '新的计划完成日期格式不正确（应为 YYYY-MM-DD）' });
+                return;
+            }
+            if (task.dueDate) {
+                const orig = new Date(task.dueDate + 'T00:00:00');
+                if (!isNaN(orig.getTime()) && d.getTime() <= orig.getTime()) {
+                    sendResponse(res, 400, { error: '新的计划完成日期应晚于原截止日期' });
+                    return;
+                }
+            }
+        }
+        const userName = ac.getUserName(data, userId) || '当前用户';
+        task.pendingChange = {
+            type,
+            reason,
+            newDueDate,
+            requestedBy: userId,
+            requestedByName: userName,
+            requestedAt: new Date().toISOString(),
+        };
+        // 通知项目负责人评审
+        const project = (data.projects || []).find(p => p.id === (task.projectId || task.project_id));
+        if (project) {
+            const leadIds = new Set([project.ownerId, project.manager].filter(Boolean));
+            leadIds.forEach((lid) => {
+                if (lid === userId) return; // 不通知自己
+                data.notifications.push({
+                    id: generateId(),
+                    user_id: lid,
+                    type: 'task_change_request',
+                    title: `任务变更申请待评审：${task.title}`,
+                    message: `${userName} 申请${type === 'modify' ? '修改计划（延期）' : '废止'}任务，理由：${reason}`,
+                    relatedId: task.id,
+                    read: 0,
+                    created_at: new Date().toISOString(),
+                });
+            });
+        }
+        saveData(data);
+        sendResponse(res, 200, task);
+        return;
+    }
+
+    // 任务变更评审（通过/驳回）- POST /api/tasks/:id/change-review
+    // 仅项目负责人可评审。approve：modify 记录 modifications 并延后 dueDate；abolish 标记任务废止。
+    if (pathname.match(/^\/api\/tasks\/[\w-]+\/change-review$/) && method === 'POST') {
+        const id = pathname.split('/')[3];
+        const body = await parseBody(req);
+        const data = loadData();
+        const userId = ac.getUserId(req);
+        if (!userId) { sendResponse(res, 401, { error: '未登录' }); return; }
+        if (!ac.canManageTask(data, userId, id)) {
+            sendResponse(res, 403, { error: '仅项目负责人可评审变更申请' });
+            return;
+        }
+        const index = data.tasks.findIndex(t => t.id === id);
+        if (index === -1) { sendResponse(res, 404, { error: 'Task not found' }); return; }
+        const task = data.tasks[index];
+        if (!task.pendingChange) {
+            sendResponse(res, 400, { error: '该任务没有待评审的变更申请' });
+            return;
+        }
+        const decision = body.decision;
+        if (decision !== 'approve' && decision !== 'reject') {
+            sendResponse(res, 400, { error: '无效的评审决定' });
+            return;
+        }
+        const reviewerName = ac.getUserName(data, userId) || '当前用户';
+        const pc = task.pendingChange;
+        if (decision === 'approve') {
+            if (pc.type === 'modify') {
+                task.modifications = task.modifications || [];
+                task.modifications.push({
+                    originalDueDate: task.dueDate,
+                    newDueDate: pc.newDueDate,
+                    reason: pc.reason,
+                    requestedBy: pc.requestedBy,
+                    requestedByName: pc.requestedByName,
+                    approvedBy: userId,
+                    approvedByName: reviewerName,
+                    at: new Date().toISOString(),
+                });
+                // 计划完成时间延后到新截止日期
+                task.dueDate = pc.newDueDate;
+                task.lastModifiedReason = pc.reason;
+            } else {
+                task.abolished = true;
+                task.abolishReason = pc.reason;
+                task.abolishedBy = userId;
+                task.abolishedByName = reviewerName;
+                task.abolishedAt = new Date().toISOString();
+                // 废止通过即视为终态：移出「进行中」栏，归入「已完成」栏
+                task.status = 'done';
+            }
+            task.pendingChange = null;
+            if (pc.requestedBy && pc.requestedBy !== userId) {
+                data.notifications.push({
+                    id: generateId(),
+                    user_id: pc.requestedBy,
+                    type: 'task_change_approved',
+                    title: `任务变更已通过：${task.title}`,
+                    message: `您的${pc.type === 'modify' ? '修改计划（延期）' : '废止'}申请已通过项目负责人评审。`,
+                    relatedId: task.id,
+                    read: 0,
+                    created_at: new Date().toISOString(),
+                });
+            }
+        } else {
+            task.pendingChange = null;
+            task.changeRejected = {
+                type: pc.type,
+                reason: pc.reason,
+                reviewNote: (body.reviewNote || '').trim(),
+                rejectedBy: userId,
+                rejectedByName: reviewerName,
+                at: new Date().toISOString(),
+            };
+            if (pc.requestedBy && pc.requestedBy !== userId) {
+                data.notifications.push({
+                    id: generateId(),
+                    user_id: pc.requestedBy,
+                    type: 'task_change_rejected',
+                    title: `任务变更被驳回：${task.title}`,
+                    message: `您的${pc.type === 'modify' ? '修改计划（延期）' : '废止'}申请未通过评审${body.reviewNote ? '：' + body.reviewNote : ''}。`,
+                    relatedId: task.id,
+                    read: 0,
+                    created_at: new Date().toISOString(),
+                });
+            }
+        }
+        saveData(data);
+        sendResponse(res, 200, task);
+        return;
+    }
+
     // Members API - 完整 CRUD
     if (pathname === '/api/members' && method === 'GET') {
         const data = loadData();
-        sendResponse(res, 200, data.members);
+        // 修补①：成员名册脱敏 —— password 是登录凭证，不应下发到浏览器 localStorage
+        const members = (data.members || []).map((m) => {
+            const { password, ...rest } = m;
+            return rest;
+        });
+        sendResponse(res, 200, members);
         return;
     }
 
@@ -1512,6 +1852,31 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // 成员重置密码 - PUT /api/members/:id/reset-password
+    // 修补③：管理员按 邮箱@前缀+Yj1018! 规则重置并持久化（与前端 useAuthStore.resetPassword 对齐）
+    if (pathname.match(/^\/api\/members\/[\w-]+\/reset-password$/) && method === 'PUT') {
+        const id = pathname.split('/')[3];
+        const data = loadData();
+        const userId = ac.getUserId(req);
+        if (!ac.isAdmin(data, userId)) {
+            sendResponse(res, 403, { error: '仅管理员可重置成员密码' });
+            return;
+        }
+        const index = data.members.findIndex((m) => m.id === id);
+        if (index === -1) {
+            sendResponse(res, 404, { error: 'Member not found' });
+            return;
+        }
+        const member = data.members[index];
+        const prefix = (member.email || '').split('@')[0] || 'user';
+        const newPwd = `${prefix}Yj1018!`;
+        member.password = newPwd;
+        member.updated_at = new Date().toISOString();
+        saveData(data);
+        sendResponse(res, 200, { success: true, password: newPwd });
+        return;
+    }
+
     // 成员删除 - DELETE /api/members/:id
     if (pathname.match(/^\/api\/members\/[\w-]+$/) && method === 'DELETE') {
         const id = pathname.split('/').pop();
@@ -1530,8 +1895,11 @@ const server = http.createServer(async (req, res) => {
     // Notifications API - 完整 CRUD
     if (pathname === '/api/notifications' && method === 'GET') {
         const data = loadData();
-        const userId = url.searchParams.get('userId');
-        const notifications = userId ? data.notifications.filter(n => n.user_id === userId) : data.notifications;
+        // 修补②：按会话 cookie 身份过滤，不再信任 query userId（防伪造读他人通知）
+        const userId = ac.getUserId(req);
+        const notifications = userId
+            ? data.notifications.filter((n) => n.user_id === userId)
+            : [];
         sendResponse(res, 200, notifications);
         return;
     }
@@ -1539,9 +1907,12 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/notifications' && method === 'POST') {
         const body = await parseBody(req);
         const data = loadData();
+        const userId = ac.getUserId(req);
         const notification = {
             ...body,
             id: generateId(),
+            // 修补②：通知归属以会话 cookie 身份为准（body.user_id 不得伪造）
+            user_id: userId || body.user_id,
             read: body.read || 0,
             created_at: new Date().toISOString()
         };
@@ -2019,6 +2390,14 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // ==================== 项目群聊 API ====================
+    if (chat.isChatPath(pathname)) {
+        const handled = await chat.handle(req, res, {
+            pathname, method, url, loadData, saveData, sendResponse, parseBody, generateId, ac,
+        });
+        if (handled) return;
+    }
+
     // 404
     sendResponse(res, 404, { error: 'Not found' });
 });
@@ -2042,7 +2421,9 @@ server.listen(PORT, () => {
     console.log('  POST   /api/projects/:id/tasks - 创建任务');
     console.log('  GET    /api/tasks        - 获取所有任务');
     console.log('  PUT    /api/tasks/:id    - 更新任务');
-    console.log('  DELETE /api/tasks/:id    - 删除任务');
+    console.log('  DELETE /api/tasks/:id    - 删除任务（仅待启动可删）');
+    console.log('  POST   /api/tasks/:id/change-request - 提交修改/废止申请');
+    console.log('  POST   /api/tasks/:id/change-review - 评审变更申请');
     console.log('  GET    /api/todos        - 获取所有待办');
     console.log('  POST   /api/todos        - 创建待办');
     console.log('  PUT    /api/todos/:id    - 更新待办');

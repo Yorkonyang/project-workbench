@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
-import { Check, Plus, X, Calendar, User, Flag, CheckCircle2, Paperclip, FileText } from 'lucide-react';
+import { Check, Plus, X, Calendar, User, Flag, CheckCircle2, Paperclip, FileText, Ban, AlertTriangle } from 'lucide-react';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useTodoStore } from '@/store/useTodoStore';
 import { useMemberStore } from '@/store/useMemberStore';
@@ -13,6 +13,7 @@ import { useProjectStore } from '@/store/useProjectStore';
 import { useAccess } from '@/hooks/useAccess';
 import DocumentForm from '@/components/documents/DocumentForm';
 import TodoForm from '@/components/todos/TodoForm';
+import ChangeRequestModal from '@/components/tasks/ChangeRequestModal';
 
 // 文档选择弹窗：勾选要关联的文档，点击"完成关联"一次性批量关联
 function DocSelectorModal({ task, onClose, onLink, projects }) {
@@ -156,6 +157,7 @@ function DocSelectorModal({ task, onClose, onLink, projects }) {
 export default function TaskProgressModal({ task, onClose, projects = [] }) {
   const navigate = useNavigate();
   const updateTask = useTaskStore((s) => s.updateTask);
+  const reviewTaskChange = useTaskStore((s) => s.reviewTaskChange);
   const todos = useTodoStore((s) => s.todos);
   const toggleTodo = useTodoStore((s) => s.toggleTodo);
   const members = useMemberStore((s) => s.members);
@@ -172,6 +174,13 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
   const { canManageProject, canReportTask, canManageTodo } = useAccess();
   const canManageProj = canManageProject(project);
   const canReport = canReportTask(task);
+  // 进行中任务：项目负责人或任务责任人可发起「废止」申请（已有待审或已废止则不再显示）。
+  // 注：修改计划不需单独按钮——「编辑任务」表单即可改截止日期，提交流程经项目负责人评审生效。
+  const canAbolish =
+    (canManageProj || canReport) && task.status === 'in_progress' && !task.pendingChange && !task.abolished;
+  // 废止申请待评审 或 已废止（审批通过）：进度汇报弹窗内的新增/编辑操作置灰
+  const pendingAbolish = !!(task.pendingChange && task.pendingChange.type === 'abolish');
+  const lockEdits = pendingAbolish || !!task.abolished;
 
   const [reports, setReports] = useState(task?.progressReports || []);
   const [newReport, setNewReport] = useState({
@@ -181,6 +190,10 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [todoFormOpen, setTodoFormOpen] = useState(false);
+  // 变更申请：本弹窗内发起的「修改/废止」理由弹窗 + 评审状态
+  const [changeType, setChangeType] = useState(null);
+  const [reviewNote, setReviewNote] = useState('');
+  const [reviewing, setReviewing] = useState(false);
 
   const assignees = (task?.assignees || (task?.assignee ? [task.assignee] : [])).map(
     (id) => members.find((m) => m.id === id)
@@ -271,6 +284,32 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
     onClose();
   };
 
+  // 变更申请评审（通过/驳回）：仅项目负责人可操作
+  const handleApproveChange = async () => {
+    if (!canManageProj) return;
+    setReviewing(true);
+    try {
+      await reviewTaskChange(task.id, { decision: 'approve' });
+      setReviewing(false);
+      onClose();
+    } catch (e) {
+      alert(e?.message || '评审失败');
+      setReviewing(false);
+    }
+  };
+  const handleRejectChange = async () => {
+    if (!canManageProj) return;
+    setReviewing(true);
+    try {
+      await reviewTaskChange(task.id, { decision: 'reject', reviewNote: reviewNote.trim() });
+      setReviewing(false);
+      onClose();
+    } catch (e) {
+      alert(e?.message || '评审失败');
+      setReviewing(false);
+    }
+  };
+
   const handleTodoFormClose = () => {
     setTodoFormOpen(false);
     useTodoStore.getState().fetchTodos();
@@ -314,6 +353,20 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
           )}
         </div>
 
+        {/* 已废止任务：展示废止原因，进度相关新增/编辑操作已置灰 */}
+        {task.abolished && (
+          <div className="flex items-start gap-2 bg-slate-100 border border-slate-300 rounded-lg p-3 text-sm text-slate-600">
+            <Ban className="w-4 h-4 mt-0.5 shrink-0 text-slate-500" />
+            <div>
+              <span className="font-medium text-slate-700">任务已废止</span>
+              {task.abolishReason && <span className="ml-1">：{task.abolishReason}</span>}
+              {task.abolishedByName && (
+                <span className="ml-1 text-slate-400">（由 {task.abolishedByName} 审批）</span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Main Content: Left Todo | Right Progress */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Left: Associated Todos */}
@@ -321,7 +374,7 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
             <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
               <h4 className="text-sm font-medium text-slate-700">关联待办 ({taskTodos.length})</h4>
               {canReport && (
-                <Button size="sm" variant="ghost" onClick={() => setTodoFormOpen(true)}>
+                <Button size="sm" variant="ghost" onClick={() => setTodoFormOpen(true)} disabled={lockEdits} title={lockEdits ? '任务已废止/待评审，暂不可新增待办' : undefined}>
                   <Plus className="w-3.5 h-3.5" />
                   新增待办
                 </Button>
@@ -371,7 +424,7 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
             <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
               <h4 className="text-sm font-medium text-slate-700">进度汇报记录 ({reports.length})</h4>
               {canReport && (
-                <Button size="sm" variant="ghost" onClick={() => setShowForm(!showForm)}>
+                <Button size="sm" variant="ghost" onClick={() => setShowForm(!showForm)} disabled={lockEdits} title={lockEdits ? '任务已废止/待评审，暂不可新增进度汇报' : undefined}>
                   <Plus className="w-3.5 h-3.5" />
                   新增进度汇报
                 </Button>
@@ -454,7 +507,7 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
                 任务文档 ({linkedDocs.length})
               </h4>
               {canReport && (
-                <Button size="sm" variant="ghost" onClick={() => setDocSelectorOpen(true)}>
+                <Button size="sm" variant="ghost" onClick={() => setDocSelectorOpen(true)} disabled={lockEdits} title={lockEdits ? '任务已废止/待评审，暂不可添加文档' : undefined}>
                   <Plus className="w-3.5 h-3.5" />
                   添加文档
                 </Button>
@@ -482,7 +535,8 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
                     {canReport && (
                       <button
                         onClick={() => handleRemoveDocLink(doc.id)}
-                        className="p-1 text-slate-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                        disabled={lockEdits}
+                        className="p-1 text-slate-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-30 disabled:cursor-not-allowed"
                         title="移除关联"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -492,6 +546,47 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
                 ))
               )}
             </div>
+          </div>
+        )}
+
+        {/* 变更申请评审面板：进行中任务提交修改/废止后，由项目负责人评审通过/驳回 */}
+        {task.pendingChange && (
+          <div className="border border-amber-200 bg-amber-50 rounded-lg p-4 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-amber-800">
+              <AlertTriangle className="w-4 h-4" />
+              变更申请待评审（{task.pendingChange.type === 'modify' ? '修改计划（延期）' : '废止任务'}）
+            </div>
+            <div className="text-sm text-slate-600 space-y-1">
+              <div>申请人：{task.pendingChange.requestedByName || '—'}（{task.pendingChange.requestedAt?.slice(0, 10) || ''}）</div>
+              <div>理由：{task.pendingChange.reason}</div>
+              {task.pendingChange.type === 'modify' && task.pendingChange.newDueDate && (
+                <div>
+                  新计划完成日期：
+                  <span className="font-medium text-slate-800">{task.pendingChange.newDueDate}</span>
+                  （原：{task.dueDate || '—'}）
+                </div>
+              )}
+            </div>
+            {canManageProj ? (
+              <div className="space-y-2 pt-1">
+                <Input
+                  placeholder="驳回意见（可选）"
+                  value={reviewNote}
+                  onChange={(e) => setReviewNote(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={handleRejectChange} disabled={reviewing} className="flex-1">
+                    驳回
+                  </Button>
+                  <Button variant="success" onClick={handleApproveChange} disabled={reviewing} className="flex-1">
+                    <CheckCircle2 className="w-4 h-4" />
+                    通过评审
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-amber-700">该申请正在等待项目负责人评审，评审通过后生效。</div>
+            )}
           </div>
         )}
 
@@ -524,7 +619,7 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
             <Button
               variant="success"
               onClick={handleSubmitReport}
-              disabled={submitting || task.status === 'done'}
+              disabled={submitting || task.status === 'done' || task.abolished}
               className="flex-1"
             >
               <Check className="w-4 h-4" />
@@ -534,6 +629,13 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
           {canReport && task.status !== 'todo' && task.status !== 'done' && task.status !== 'review' && (
             <Button variant="outline" onClick={handleFinishTask} className="px-6">
               提交审核
+            </Button>
+          )}
+          {/* 进行中任务：仅保留「废止任务」（申请人填理由，项目负责人评审）。修改计划通过「编辑任务」表单完成 */}
+          {canAbolish && (
+            <Button variant="outline" onClick={() => setChangeType('abolish')} className="px-6">
+              <Ban className="w-4 h-4" />
+              废止任务
             </Button>
           )}
           {/* 没有任何可操作按钮时给出提示，避免用户迷惑"为什么没按钮" */}
@@ -572,6 +674,16 @@ export default function TaskProgressModal({ task, onClose, projects = [] }) {
               });
             }
           }}
+        />
+      )}
+
+      {/* 任务变更申请（废止）理由弹窗：提交后关闭整个进度弹窗（而非停留在进度汇报视图） */}
+      {changeType && (
+        <ChangeRequestModal
+          task={task}
+          type={changeType}
+          onClose={() => setChangeType(null)}
+          onSubmitted={() => { setChangeType(null); onClose(); }}
         />
       )}
     </Modal>

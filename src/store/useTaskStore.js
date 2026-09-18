@@ -66,6 +66,24 @@ export const useTaskStore = create(
         }));
       },
 
+      // 提交任务变更申请（修改计划/废止）：写入 pendingChange，乐观更新本地
+      requestTaskChange: async (id, payload) => {
+        const task = await apiClient.requestTaskChange(id, payload);
+        set((state) => ({
+          tasks: state.tasks.map((t) => (t.id === id ? task : t)),
+        }));
+        return task;
+      },
+
+      // 评审任务变更申请（通过/驳回）：apply 后乐观更新本地
+      reviewTaskChange: async (id, payload) => {
+        const task = await apiClient.reviewTaskChange(id, payload);
+        set((state) => ({
+          tasks: state.tasks.map((t) => (t.id === id ? task : t)),
+        }));
+        return task;
+      },
+
       reorderTasks: (newTasks) => set({ tasks: newTasks }),
 
       getTasksByProject: (projectId) =>

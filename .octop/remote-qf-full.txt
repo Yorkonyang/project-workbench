@@ -1,0 +1,1819 @@
+﻿===== server\qingflow.js =====
+/**
+ * 轻流(QingFlow) 集成模块
+ * 分为两套独立配置：
+ *   1. pushConfig  - Q-Source 推送（推送待办/任务到轻流 BPM）
+ *   2. syncConfig  - 开放平台 OAuth（同步组织架构和成员）
+ */
+
+const https = require('https');
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const db = require('./db');
+
+// 默认密码规则：邮箱 @ 前缀 + 固定后缀 Yj1018!
+// 用于轻流同步新成员时的初始密码，成员可登录后自行修改。
+const DEFAULT_PASSWORD_SUFFIX = 'Yj1018!';
+function buildDefaultPassword(email) {
+    const prefix = (email || '').split('@')[0] || 'user';
+    return prefix + DEFAULT_PASSWORD_SUFFIX;
+}
+
+// 配置文件路径（使用绝对路径避免 __dirname 问题）
+const CONFIG_PATH = path.resolve('D:/AI/project-workbench/data/qingflow-config.json');
+
+// 加载持久化配置
+function loadPushConfig() {
+    try {
+        const data = fs.readFileSync(CONFIG_PATH, 'utf8');
+        return JSON.parse(data);
+    } catch (e) {
+        return { baseUrl: '', qsourceId: '' };
+    }
+}
+
+// 保存配置到文件
+function savePushConfig(config) {
+    try {
+        const dir = path.dirname(CONFIG_PATH);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    } catch (e) {
+        console.error('[轻流配置] 保存失败:', e.message);
+    }
+}
+
+// ===== 推送配置（Q-Source） =====
+// 用于将任务/待办推送到轻流 Q-Source 被动数据源
+let pushConfig = loadPushConfig();
+// 确保结构完整
+pushConfig.baseUrl = pushConfig.baseUrl || '';
+pushConfig.qsourceId = pushConfig.qsourceId || '';
+// 前端可访问地址：责任人在轻流通知中点击链接时跳转到的地址（默认本地，需在生产环境配置为内网/公网地址）
+pushConfig.frontendBaseUrl = pushConfig.frontendBaseUrl || '';
+
+// ===== 同步配置（开放平台 OAuth） =====
+// 用于通过开放平台 API 同步组织架构和成员
+let syncConfig = {
+    baseUrl: '',          // 开放平台地址（可能与 Q-Source 地址不同）
+    appId: '',            // 开放平台应用 AppID
+    secret: '',           // 开放平台应用 Secret
+    accessToken: '',      // 当前有效的 OAuth Token
+    tokenExpiry: 0,       // Token 过期时间戳
+    tokenApiPath: '/api/v1/oauth/token',
+    deptApiPath: '/api/v1/dept/list',
+    userApiPath: '/api/v1/user/list',
+};
+
+// ===== 推送配置 CRUD =====
+function getPushConfig() {
+    return { ...pushConfig };
+}
+
+function setPushConfig(config) {
+    pushConfig = { ...pushConfig, ...config };
+    // 移除非推送字段
+    delete pushConfig.appId;
+    delete pushConfig.secret;
+    delete pushConfig.accessToken;
+    delete pushConfig.tokenExpiry;
+    // 持久化保存
+    savePushConfig(pushConfig);
+}
+
+// ===== 同步配置 CRUD =====
+function getSyncConfig() {
+    return {
+        baseUrl: syncConfig.baseUrl,
+        appId: syncConfig.appId,
+        secret: '******', // 不返回 secret 明文
+        tokenExpiry: syncConfig.tokenExpiry,
+    };
+}
+
+function setSyncConfig(config) {
+    syncConfig = { ...syncConfig, ...config };
+    // 移除非同步字段
+    delete syncConfig.qsourceId;
+}
+
+// ===== 通用 HTTP 请求 =====
+function qingflowRequest(method, url, body = null) {
+    return new Promise((resolve, reject) => {
+        try {
+            const parsedUrl = new URL(url);
+            const options = {
+                hostname: parsedUrl.hostname,
+                port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+                path: parsedUrl.pathname + (parsedUrl.search || ''),
+                method: method,
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            };
+
+            const protocol = parsedUrl.protocol === 'https:' ? https : http;
+            const req = protocol.request(options, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    try {
+                        resolve(JSON.parse(data));
+                    } catch (e) {
+                        resolve({ raw: data });
+                    }
+                });
+            });
+
+            req.setTimeout(5000, () => {
+                req.destroy(new Error('请求超时(5s)'));
+            });
+
+            req.on('error', reject);
+            if (body) {
+                req.write(JSON.stringify(body));
+            }
+            req.end();
+        } catch (e) {
+            reject(new Error(`URL解析失败: ${e.message}`));
+        }
+    });
+}
+
+// ===== OAuth Token 获取（同步用） =====
+async function getAccessToken() {
+    const { baseUrl, appId, secret, tokenApiPath } = syncConfig;
+
+    if (syncConfig.accessToken && Date.now() < syncConfig.tokenExpiry) {
+        return syncConfig.accessToken;
+    }
+
+    if (!baseUrl || !appId || !secret) {
+        console.error('[轻流OAuth] 缺少配置: baseUrl / appId / secret');
+        return null;
+    }
+
+    const url = `${baseUrl}${tokenApiPath}`;
+    console.log('[轻流OAuth] 请求 Token:', url);
+
+    try {
+        const result = await qingflowRequest('POST', url, {
+            app_id: appId,
+            secret: secret,
+            grant_type: 'client_credentials'
+        });
+
+        let token = null;
+        if (result && result.errCode === 0 && result.data) {
+            token = result.data.access_token || result.data.token;
+        } else if (result && result.access_token) {
+            token = result.access_token;
+        } else if (result && result.token) {
+            token = result.token;
+        }
+
+        if (token) {
+            const expiresIn = result.expires_in || 7200;
+            syncConfig.accessToken = token;
+            syncConfig.tokenExpiry = Date.now() + (expiresIn - 60) * 1000;
+            console.log('[轻流OAuth] Token 获取成功');
+        } else {
+            console.error('[轻流OAuth] Token 响应格式异常:', result);
+        }
+
+        return token;
+    } catch (error) {
+        console.error('[轻流OAuth] Token 请求失败:', error.message);
+        return null;
+    }
+}
+
+// ===== 组织架构获取（同步用） =====
+async function getDepartments() {
+    const { baseUrl, deptApiPath } = syncConfig;
+
+    if (!baseUrl) {
+        return { success: false, error: '同步配置中轻流地址未配置' };
+    }
+
+    const token = await getAccessToken();
+    if (!token) {
+        return { success: false, error: 'OAuth Token 获取失败，请检查同步配置' };
+    }
+
+    const url = `${baseUrl}${deptApiPath}`;
+    console.log('[轻流同步] 获取组织架构:', url);
+
+    const parsedUrl = new URL(url);
+    const options = {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || 443,
+        path: parsedUrl.pathname + (parsedUrl.search || ''),
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+        }
+    };
+
+    const protocol = parsedUrl.protocol === 'https:' ? https : http;
+    return new Promise((resolve) => {
+        const req = protocol.request(options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    const parsed = JSON.parse(data);
+                    let departments = [];
+                    if (Array.isArray(parsed)) departments = parsed;
+                    else if (parsed.data && Array.isArray(parsed.data)) departments = parsed.data;
+                    else if (parsed.errCode === 0) departments = parsed.data?.list || parsed.data?.departments || [];
+                    console.log(`[轻流同步] 组织架构获取成功，共 ${departments.length} 个部门`);
+                    resolve({ success: true, departments });
+                } catch (e) {
+                    resolve({ success: false, error: `响应解析失败: ${data.slice(0, 200)}` });
+                }
+            });
+        });
+        req.setTimeout(10000, () => req.destroy(new Error('超时10s')));
+        req.on('error', err => resolve({ success: false, error: err.message }));
+        req.end();
+    });
+}
+
+async function getUsers() {
+    const { baseUrl, userApiPath } = syncConfig;
+
+    if (!baseUrl) {
+        return { success: false, error: '同步配置中轻流地址未配置' };
+    }
+
+    const token = await getAccessToken();
+    if (!token) {
+        return { success: false, error: 'OAuth Token 获取失败' };
+    }
+
+    const url = `${baseUrl}${userApiPath}`;
+    console.log('[轻流同步] 获取用户列表:', url);
+
+    const parsedUrl = new URL(url);
+    const options = {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || 443,
+        path: parsedUrl.pathname + (parsedUrl.search || ''),
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+        }
+    };
+
+    const protocol = parsedUrl.protocol === 'https:' ? https : http;
+    return new Promise((resolve) => {
+        const req = protocol.request(options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    const parsed = JSON.parse(data);
+                    let users = [];
+                    if (Array.isArray(parsed)) users = parsed;
+                    else if (parsed.data && Array.isArray(parsed.data)) users = parsed.data;
+                    else if (parsed.errCode === 0) users = parsed.data?.list || parsed.data?.users || [];
+                    console.log(`[轻流同步] 用户获取成功，共 ${users.length} 个用户`);
+                    resolve({ success: true, users });
+                } catch (e) {
+                    resolve({ success: false, error: `响应解析失败: ${data.slice(0, 200)}` });
+                }
+            });
+        });
+        req.setTimeout(10000, () => req.destroy(new Error('超时10s')));
+        req.on('error', err => resolve({ success: false, error: err.message }));
+        req.end();
+    });
+}
+
+// ===== 组织架构同步（同步用） =====
+async function syncOrganization(localData) {
+    const { baseUrl } = syncConfig;
+
+    if (!baseUrl) {
+        return { success: false, error: '同步配置中轻流地址未配置' };
+    }
+
+    const results = { syncedDepartments: 0, syncedMembers: 0, updatedMembers: 0, errors: [] };
+
+    // 1. 同步组织架构
+    const deptResult = await getDepartments();
+    if (!deptResult.success) {
+        return { success: false, error: `获取组织架构失败: ${deptResult.error}`, results };
+    }
+
+    if (deptResult.departments.length > 0 && localData) {
+        if (!localData.departments) localData.departments = [];
+        const existingDeptIds = new Set(localData.departments.map(d => d.id));
+        let added = 0;
+
+        for (const dept of deptResult.departments) {
+            const deptId = dept.id || dept.dept_id || dept.department_id;
+            const deptName = dept.name || dept.dept_name || '';
+            const parentId = dept.parent_id || dept.parentId || null;
+
+            if (!deptName) continue;
+
+            if (existingDeptIds.has(deptId)) {
+                const idx = localData.departments.findIndex(d => d.id === deptId);
+                if (idx !== -1) {
+                    localData.departments[idx] = {
+                        ...localData.departments[idx],
+                        name: deptName,
+                        parentId,
+                        updated_at: new Date().toISOString()
+                    };
+                }
+            } else {
+                const newDept = {
+                    id: deptId || `dept_${Date.now()}_${added}`,
+                    name: deptName,
+                    parentId,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                };
+                localData.departments.push(newDept);
+                existingDeptIds.add(newDept.id);
+                added++;
+            }
+        }
+        results.syncedDepartments = added;
+    }
+
+    // 2. 同步成员
+    const userResult = await getUsers();
+    if (!userResult.success) {
+        results.errors.push(`获取用户失败: ${userResult.error}`);
+    } else if (userResult.users.length > 0 && localData) {
+        if (!localData.members) localData.members = [];
+        const existingEmails = new Set(localData.members.map(m => m.email));
+        let addedMembers = 0, updatedMembers = 0;
+
+        for (const user of userResult.users) {
+            const userId = user.id || user.user_id || user.userId;
+            const userName = user.name || user.username || user.real_name || user.realName || '';
+            const userEmail = user.email || user.mail || '';
+            const phone = user.phone || user.mobile || '';
+            const deptId = user.dept_id || user.deptId || user.department_id || user.departmentId;
+
+            if (!userName && !userEmail) continue;
+
+            if (userEmail && existingEmails.has(userEmail)) {
+                const idx = localData.members.findIndex(m => m.email === userEmail);
+                if (idx !== -1) {
+                    localData.members[idx] = {
+                        ...localData.members[idx],
+                        name: userName || localData.members[idx].name,
+                        email: userEmail,
+                        phone: phone || localData.members[idx].phone,
+                        departmentId: deptId,
+                        source: 'qingflow',
+                        updated_at: new Date().toISOString()
+                    };
+                    updatedMembers++;
+                }
+            } else {
+                const newMember = {
+                    id: userId || `mem_${Date.now()}_${addedMembers}`,
+                    name: userName,
+                    email: userEmail,
+                    password: buildDefaultPassword(userEmail), // 默认密码：邮箱 @ 前缀 + Yj1018!
+                    phone,
+                    departmentId: deptId,
+                    role: 'member',
+                    avatarColor: '#3b82f6',
+                    source: 'qingflow',
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                };
+                localData.members.push(newMember);
+                if (userEmail) existingEmails.add(userEmail);
+                addedMembers++;
+            }
+        }
+        results.syncedMembers = addedMembers;
+        results.updatedMembers = updatedMembers;
+    }
+
+    console.log('[轻流同步] 同步完成:', results);
+    return { success: true, results };
+}
+
+// ===== 字段中文翻译映射（轻流字段值 → 中文） =====
+const STATUS_LABELS = {
+    done: '已完成',
+    in_progress: '进行中',
+    todo: '待处理',
+    planned: '待启动',
+    pending: '待处理',
+    achieved: '已达成',
+    overdue: '逾期',
+};
+const PRIORITY_LABELS = {
+    low: '低优先级',
+    medium: '中优先级',
+    high: '高优先级',
+};
+const REMINDER_TYPE_LABELS = {
+    overdue: '逾期提醒',
+    escalation: '催办提醒',
+};
+function translateStatus(v) {
+    if (!v) return '未开始';
+    return STATUS_LABELS[v] || v;
+}
+function translatePriority(v) {
+    if (!v) return '中优先级';
+    return PRIORITY_LABELS[v] || v;
+}
+function translateReminderType(v) {
+    if (!v) return '';
+    return REMINDER_TYPE_LABELS[v] || v;
+}
+
+// ===== 生成前端直达链接 =====
+// 责任人在轻流收到通知后，点击该链接可直接打开对应的任务详情（填写进度/关闭待办）。
+// frontendBaseUrl 缺省回退到本地地址，生产环境应在「BPM 推送集成」配置中填写实际可访问地址。
+// 若传入 email，则使用方案 B（ticket 替代邮箱）：
+//   - 推送时预签 ticket 存入 ticketStore；URL 只包含 ticket，不再含任何邮箱/userId/PII；
+//   - 链接 HMAC-SHA256(ticket|exp) 防篡改；
+//   - 用户点击时后端从 ticketStore 还原 userId/email → HttpOnly Cookie → 302；
+//   - ticket 与待办/任务关联（ref），多次有效；待办/任务完成或删除时后端主动失效。
+// @param {string} path   前端路径（如 /task/:id）
+// @param {string} email  责任人邮箱（无则回退普通链接）
+// @param {{type:'todo'|'task'|'milestone', id:string} | null} [ref] 关联的待办/任务
+function buildFrontendUrl(path, email, ref = null) {
+    const base = (pushConfig.frontendBaseUrl || 'http://localhost:5173').replace(/\/+$/, '');
+    const plain = `${base}${path}`;
+    if (!email) return plain;
+    try {
+        const sso = require('./auth');
+        // 邮箱 → 责任人 userId（必要：ticket 表里需要保存 userId 而非仅邮箱）
+        const member = db.getMemberByEmail(email);
+        if (!member) {
+            console.warn('[轻流推送] 未找到邮箱对应成员，回退普通链接:', email);
+            return plain;
+        }
+        // 预签 ticket（写入 ticketStore，关联 ref），并立刻生成签名 URL
+        const { ticket, expiresAt } = sso.issuePreTicket(member.id, member.email, ref);
+        const exp = Math.floor(expiresAt / 1000);
+        return sso.buildTicketUrl(base, '/api/auth/sso-link', ticket, exp, path);
+    } catch (e) {
+        // 签名失败时仍返回原链接（保留旧行为），便于排查
+        console.warn('[轻流推送] SSO ticket 签名失败，回退普通链接:', e.message);
+        return plain;
+    }
+}
+
+// ===== 推送（Q-Source，保持不变） =====
+async function notifyTaskCreated(task) {
+    const assignee = db.getMemberById(task.assigneeId || task.assignee)
+        || db.getMemberByName(task.assignee)
+        || db.getMemberByEmail(task.assignee);
+    const assigneeEmail = assignee?.email || '';
+
+    const projectId = task.projectId || task.project_id;
+    const project = db.getProjectById(projectId);
+    const projectTitle = project?.name || '项目工作台';
+
+    const payload = {
+        bt: task.title || '',
+        ms: task.description || '',
+        zrr: assigneeEmail,
+        yxj: translatePriority(task.priority || 'medium'),
+        jzrq: task.dueDate || '',
+        ssxm: projectTitle,
+        zht: translateStatus(task.status || '未开始'),
+    };
+
+    // 任务直达链接（前端项目管理界面 /），带 SSO 签名（方案 B），责任人免登录直达；ticket 关联该任务，完成时失效
+    payload.taskUrl = buildFrontendUrl('/', assigneeEmail, { type: 'task', id: task.id });
+
+    console.log('[轻流推送] 任务通知:', payload);
+    return await sendToQSource(payload);
+}
+
+async function notifyTodoCreated(todo) {
+    const member = db.getMemberById(todo.assignee)
+        || db.getMemberByName(todo.assignee)
+        || db.getMemberByEmail(todo.assignee);
+    const assigneeEmail = member?.email || '';
+
+    const projectId = todo.projectId;
+    const project = db.getProjectById(projectId);
+    const projectTitle = project?.name || '项目工作台';
+
+    const payload = {
+        bt: todo.title || '',
+        ms: todo.description || '',
+        zrr: assigneeEmail,
+        yxj: translatePriority(todo.priority || 'medium'),
+        jzrq: todo.dueDate || '',
+        ssxm: projectTitle,
+        zht: translateStatus(todo.status || '未开始'),
+    };
+
+    // 待办直达链接：统一指向项目管理界面 /，带 SSO 签名；ticket 关联该待办，完成时失效
+    payload.taskUrl = buildFrontendUrl('/', assigneeEmail, { type: 'todo', id: todo.id });
+
+    console.log('[轻流推送] 待办通知:', payload);
+    return await sendToQSource(payload);
+}
+
+/**
+ * 逾期/催办通知推送到轻流 Q-Source
+ * @param {Object} notification - 前端生成的逾期通知对象
+ *   notification.relatedType: 'task' | 'todo' | 'milestone'
+ *   notification.relatedId: 关联对象 ID
+ *   notification.type: 'overdue' | 'escalation'（提醒类型）
+ *   notification.overdueDays: 逾期天数（可选，缺省时由截止日期计算）
+ */
+async function notifyOverdue(notification) {
+    const data = db.loadData();
+    const { relatedType, relatedId, type } = notification || {};
+
+    let item = null;
+    let assigneeIds = [];
+    let priority = 'medium';
+    let dueDate = '';
+    let title = '';
+    let description = '';
+    let projectId = '';
+    let status = 'overdue';
+
+    if (relatedType === 'task') {
+        item = (data.tasks || []).find((t) => t.id === relatedId);
+        if (item) {
+            assigneeIds = item.assignees || (item.assignee ? [item.assignee] : []);
+            priority = item.priority || 'medium';
+            dueDate = item.dueDate || '';
+            title = item.title || '';
+            description = item.description || '';
+            projectId = item.projectId || '';
+            status = item.status || '未开始';
+        }
+    } else if (relatedType === 'todo') {
+        item = (data.todos || []).find((t) => t.id === relatedId);
+        if (item) {
+            assigneeIds = item.assignee ? [item.assignee] : [];
+            priority = item.priority || 'medium';
+            dueDate = item.dueDate || '';
+            title = item.title || '';
+            description = item.description || '';
+            projectId = item.projectId || '';
+            status = item.status || '未开始';
+        }
+    } else if (relatedType === 'milestone') {
+        item = (data.milestones || []).find((m) => m.id === relatedId);
+        if (item) {
+            assigneeIds = item.assignee ? [item.assignee] : (item.assignees || []);
+            priority = 'high';
+            dueDate = item.date || '';
+            title = item.title || '';
+            description = item.deliverables || '';
+            projectId = item.projectId || '';
+            status = 'overdue';
+        }
+    }
+
+    if (!item) {
+        console.warn('[轻流推送] 逾期通知关联对象不存在:', relatedType, relatedId);
+        return { success: false, error: '关联对象不存在' };
+    }
+
+    // 逾期天数：优先用前端传入，否则按截止日期与今天计算
+    let overdueDays = notification.overdueDays;
+    if (!overdueDays && dueDate) {
+        const due = new Date(dueDate);
+        const diffTime = Date.now() - due.getTime();
+        overdueDays = Math.max(1, Math.floor(diffTime / (24 * 60 * 60 * 1000)));
+    }
+    overdueDays = overdueDays || 1;
+
+    // 负责人邮箱（兼容 id / 姓名 / 邮箱），多个用分号拼接
+    const emails = assigneeIds
+        .map((id) => {
+            const m = db.getMemberById(id) || db.getMemberByName(id) || db.getMemberByEmail(id);
+            return m?.email || '';
+        })
+        .filter(Boolean);
+    const assigneeEmail = emails.join(';') || '';
+
+    const project = db.getProjectById(projectId);
+    const projectTitle = project?.name || '项目工作台';
+
+    // 直达链接兜底：① 任务 → 任务详情 ② 待办（关联任务 → 任务详情；纯待办 → 待办详情）
+    // ③ 里程碑 / 兜底 → 项目详情
+    let linkPath = projectId ? `/projects/${projectId}` : '/';
+    if (relatedType === 'task') {
+        linkPath = `/task/${relatedId}`;
+    } else if (relatedType === 'todo') {
+        linkPath = item.taskId ? `/task/${item.taskId}` : `/todo/${relatedId}`;
+    }
+
+    // 签名给第一个责任人邮箱（多人时只签第一个；assigneeEmail 字段仍保留全部分号拼接的多值）。
+    // SSO 链接是单签名的，先点开链接的人先进入；其他人后续也会收到通知。
+    const signEmail = emails[0] || '';
+
+    const payload = {
+        bt: title,          // 标题
+        ms: description,    // 描述
+        zrr: assigneeEmail, // 责任人（邮箱，多值分号分隔）
+        yxj: translatePriority(priority),      // 优先级（中文）
+        jzrq: dueDate,      // 截止日期
+        ssxm: projectTitle, // 所属项目
+        zht: translateStatus(status),          // 状态（中文）
+        yqts: overdueDays,  // 逾期天数（新增字段）
+        txlx: translateReminderType(type),     // 提醒类型（中文）：逾期提醒 / 催办提醒
+        taskUrl: buildFrontendUrl(linkPath, signEmail, { type: relatedType, id: relatedId }),   // 直达链接：责任人点击后跳转填写进度/关闭待办
+    };
+
+    console.log('[轻流推送] 逾期通知:', payload);
+    return await sendToQSource(payload);
+}
+
+// ===== 项目生命周期通知（合并 / 归档），推送给目标项目负责人 =====
+/**
+ * 解析项目负责人的邮箱（ownerId 创建者 或 manager 指定负责人）。
+ * 多个负责人用分号拼接；找不到邮箱返回空串。
+ */
+function resolveOwnerEmails(project) {
+    const ids = [project?.ownerId, project?.manager].filter((x) => x);
+    const seen = new Set();
+    const emails = [];
+    for (const id of ids) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const m = db.getMemberById(id) || db.getMemberByName(id) || db.getMemberByEmail(id);
+        if (m?.email && !emails.includes(m.email)) emails.push(m.email);
+    }
+    return emails;
+}
+
+/**
+ * 子项目合并通知：推送给目标项目的所有者/负责人邮箱。
+ * @param {Object} info
+ *   info.source  - 源项目对象（含 name/code）
+ *   info.target  - 目标项目对象（含 name/code）
+ *   info.movedCounts - 各实体移动数量
+ *   info.strategy - 'keep' | 'flatten'
+ */
+async function notifyProjectMerged(info) {
+    const { source, target, movedCounts = {}, strategy = 'keep' } = info || {};
+    const ownerEmails = resolveOwnerEmails(target);
+    const signEmail = ownerEmails[0] || '';
+
+    const movedParts = [];
+    if (movedCounts.tasks) movedParts.push(`任务 ${movedCounts.tasks}`);
+    if (movedCounts.todos) movedParts.push(`待办 ${movedCounts.todos}`);
+    if (movedCounts.documents) movedParts.push(`文档 ${movedCounts.documents}`);
+    if (movedCounts.milestones) movedParts.push(`里程碑 ${movedCounts.milestones}`);
+    if (movedCounts.risks) movedParts.push(`风险 ${movedCounts.risks}`);
+    if (movedCounts.childProjects) movedParts.push(`子项目 ${movedCounts.childProjects}`);
+    const movedText = movedParts.length ? `（${movedParts.join('、')}）` : '（无关联实体）';
+
+    const strategyText = strategy === 'flatten' ? '子树拍平' : '保留层级';
+    const payload = {
+        bt: `项目合并：${source?.name || source?.code || '未知'} → ${target?.name || target?.code || '未知'}`,
+        ms: `子项目「${source?.name || source?.code}」已合并入「${target?.name || target?.code}」（${strategyText}），移动 ${movedText}。`,
+        zrr: ownerEmails.join(';'),
+        yxj: '低优先级',
+        jzrq: new Date().toISOString().split('T')[0],
+        ssxm: target?.name || target?.code || '项目工作台',
+        zht: '已合并',
+        taskUrl: buildFrontendUrl(`/projects/${target?.id}`, signEmail, { type: 'project-merged', sourceId: source?.id, targetId: target?.id }),
+    };
+
+    console.log('[轻流推送] 项目合并通知:', payload);
+    return await sendToQSource(payload);
+}
+
+/**
+ * 项目归档通知：推送给被归档项目的所有者/负责人邮箱。
+ * @param {Object} info
+ *   info.project  - 被归档项目对象
+ *   info.tasksUpdated - 级联归档的任务数
+ */
+async function notifyProjectArchived(info) {
+    const { project, tasksUpdated = 0 } = info || {};
+    const ownerEmails = resolveOwnerEmails(project);
+    const signEmail = ownerEmails[0] || '';
+
+    const payload = {
+        bt: `项目归档：${project?.name || project?.code || '未知'}`,
+        ms: `项目「${project?.name || project?.code}」已归档，级联归档任务 ${tasksUpdated} 项。如需恢复请联系管理员。`,
+        zrr: ownerEmails.join(';'),
+        yxj: '低优先级',
+        jzrq: new Date().toISOString().split('T')[0],
+        ssxm: project?.name || project?.code || '项目工作台',
+        zht: '已归档',
+        taskUrl: buildFrontendUrl(`/projects/${project?.id}`, signEmail, { type: 'project-archived', id: project?.id }),
+    };
+
+    console.log('[轻流推送] 项目归档通知:', payload);
+    return await sendToQSource(payload);
+}
+
+async function sendToQSource(payload) {
+    const { baseUrl, qsourceId } = pushConfig;
+
+    if (!qsourceId) {
+        console.warn('[轻流推送] Q-Source ID 未配置');
+        return { success: false, errCode: -1, errMsg: 'Q-Source ID 未配置' };
+    }
+
+    const url = `${baseUrl}/api/qsource/${qsourceId}`;
+
+    try {
+        const result = await qingflowRequest('POST', url, payload);
+
+        if (result.errCode === 0 || result.errCode === undefined) {
+            console.log('[轻流推送] 推送成功');
+            return { success: true, data: result };
+        }
+
+        console.error('[轻流推送] 推送失败:', result);
+        return {
+            success: false,
+            errCode: result.errCode,
+            error: `轻流Q-Source错误 [${result.errCode}]: ${result.errMsg || '未知错误'}`,
+            rawData: result
+        };
+    } catch (error) {
+        console.error('[轻流推送] 网络错误:', error.message);
+        return { success: false, errCode: -2, error: `网络错误: ${error.message}` };
+    }
+}
+
+async function testConnection() {
+    const testPayload = {
+        bt: '[系统测试] 项目工作台集成验证',
+        ms: '这是一条测试消息，用于验证 Q-Source 接口是否正常连接。',
+        zrr: 'user@example.com',
+        yxj: translatePriority('low'),
+        jzrq: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        ssxm: '项目工作台',
+    };
+
+    console.log('[轻流推送] 测试消息:', testPayload);
+    return await sendToQSource(testPayload);
+}
+
+async function addFormData(formData) {
+    console.log('[轻流推送] 表单数据:', formData);
+    return await sendToQSource(formData);
+}
+
+module.exports = {
+    buildFrontendUrl,
+    getPushConfig,
+    setPushConfig,
+    getSyncConfig,
+    setSyncConfig,
+    getAccessToken,
+    getDepartments,
+    getUsers,
+    syncOrganization,
+    notifyTaskCreated,
+    notifyTodoCreated,
+    notifyOverdue,
+    notifyProjectMerged,
+    notifyProjectArchived,
+    addFormData,
+    testConnection,
+};
+===== src\lib\apiClient.js =====
+/**
+ * API Client for Project Workbench
+ * 前端与后端 API 交互的封装层
+ */
+
+// 默认使用相对路径 /api，由 vite 开发服务器代理到后端（localhost:3000），
+// 这样局域网内其他电脑访问时无需把后端地址硬编码成本机 IP，也不会触发 CORS。
+// 生产部署可通过环境变量 VITE_API_URL 覆盖为绝对地址。
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
+class ApiClient {
+    constructor() {
+        this.baseURL = API_BASE;
+    }
+
+    async request(endpoint, options = {}) {
+        const url = `${this.baseURL}${endpoint}`;
+        const config = {
+            headers: {
+                'Content-Type': 'application/json',
+                // S5：自定义头作为 CSRF 纵深防御，后端对写请求校验此头
+                'X-Workbench': '1',
+                ...options.headers,
+            },
+            // 身份由后端 HttpOnly 会话 cookie（workbench_session）自动携带，
+            // 客户端不再手动发送 x-user-id 头，防止身份伪造。
+            credentials: 'include',
+            ...options,
+        };
+
+        try {
+            const response = await fetch(url, config);
+            if (!response.ok) {
+                // 401 表示会话失效，交由上层提示重新登录
+                // 优先透传后端返回的错误消息（如排序号冲突提示）
+                let message = `HTTP ${response.status}: ${response.statusText}`;
+                try {
+                    const data = await response.json();
+                    if (data && data.error) message = data.error;
+                } catch (e) { /* 忽略解析失败 */ }
+                throw new Error(message);
+            }
+            return await response.json();
+        } catch (error) {
+            console.error('API Request Error:', error);
+            throw error;
+        }
+    }
+
+    // Projects - 归档相关
+    async archiveProject(id, reason, note) {
+        return this.request(`/projects/${id}/archive`, {
+            method: 'POST',
+            body: JSON.stringify({ reason, note }),
+        });
+    }
+
+    async approveArchive(id) {
+        return this.request(`/projects/${id}/approve-archive`, {
+            method: 'POST',
+        });
+    }
+
+    async rejectArchive(id) {
+        return this.request(`/projects/${id}/reject-archive`, {
+            method: 'POST',
+        });
+    }
+
+    async restoreProject(id) {
+        return this.request(`/projects/${id}/restore`, {
+            method: 'POST',
+        });
+    }
+
+    // 直接归档（项目负责人一键归档，无需审批）
+    async directArchiveProject(id) {
+        return this.request(`/projects/${id}/archive-direct`, {
+            method: 'POST',
+        });
+    }
+
+    // Projects
+    async getProjects(includeMerged = false) {
+        const qs = includeMerged ? '?includeMerged=1' : '';
+        return this.request(`/projects${qs}`);
+    }
+
+    async createProject(data) {
+        return this.request('/projects', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateProject(id, data) {
+        return this.request(`/projects/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteProject(id) {
+        return this.request(`/projects/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // 项目合并 - 预览（只读，不落库）
+    async previewMerge(sourceId, targetId) {
+        return this.request(`/projects/${sourceId}/merge-preview?targetId=${encodeURIComponent(targetId)}`);
+    }
+
+    // 项目合并 - 执行（原子）
+    async mergeProject(sourceId, targetId, strategy = 'keep') {
+        return this.request(`/projects/${sourceId}/merge`, {
+            method: 'POST',
+            body: JSON.stringify({ targetId, strategy }),
+        });
+    }
+
+    // 项目合并 - 撤销日志查询（可按 targetId/sourceId 过滤，返回未撤销且未过期的可撤销项）
+    async getMerges({ targetId, sourceId } = {}) {
+        const params = new URLSearchParams();
+        if (targetId) params.set('targetId', targetId);
+        if (sourceId) params.set('sourceId', sourceId);
+        const qs = params.toString();
+        return this.request(`/merges${qs ? `?${qs}` : ''}`);
+    }
+
+    // 项目合并 - 撤销（24h 限时回滚）
+    async undoMerge(mergeId) {
+        return this.request(`/merges/${mergeId}/undo`, {
+            method: 'POST',
+        });
+    }
+
+    // 子树查询（含全部子孙）
+    async getProjectSubtree(id) {
+        return this.request(`/projects/${id}/subtree`);
+    }
+
+    // 按父过滤获取子项目（parentId=__root__ 取根项目；null/undefined 也显式映射为 __root__，
+    // 避免静默下发全部项目——M2 修复：原 null→'' 会让后端返回所有项目）
+    async getProjectChildren(parentId) {
+        const query = parentId == null ? '?parentId=__root__' : `?parentId=${encodeURIComponent(parentId)}`;
+        return this.request(`/projects${query}`);
+    }
+
+    // Tasks
+    async getTasks(projectId) {
+        if (projectId) {
+            return this.request(`/projects/${projectId}/tasks`);
+        }
+        // 获取所有任务
+        return this.request('/tasks');
+    }
+
+    async getAllTasks() {
+        return this.request('/tasks');
+    }
+
+    async createTask(projectId, data) {
+        return this.request(`/projects/${projectId}/tasks`, {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateTask(id, data) {
+        return this.request(`/tasks/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteTask(id) {
+        return this.request(`/tasks/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // Todos
+    async getTodos() {
+        return this.request('/todos');
+    }
+
+    async createTodo(data) {
+        return this.request('/todos', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateTodo(id, data) {
+        return this.request(`/todos/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteTodo(id) {
+        return this.request(`/todos/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // Members
+    async getMembers() {
+        return this.request('/members');
+    }
+
+    async createMember(data) {
+        return this.request('/members', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateMember(id, data) {
+        return this.request(`/members/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteMember(id) {
+        return this.request(`/members/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // 管理员重置成员密码（按 邮箱@前缀+Yj1018! 规则，后端持久化）
+    async resetMemberPassword(id) {
+        return this.request(`/members/${id}/reset-password`, {
+            method: 'PUT',
+        });
+    }
+
+    // 当前用户修改密码：后端 /auth/change-password 校验原密码 + 复杂度（S2），前端不持有明文
+    async changePassword(oldPassword, newPassword) {
+        return this.request('/auth/change-password', {
+            method: 'POST',
+            body: JSON.stringify({ oldPassword, newPassword }),
+        });
+    }
+
+    // Departments (组织架构)
+    async getDepartments() {
+        return this.request('/departments');
+    }
+
+    async createDepartment(data) {
+        return this.request('/departments', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateDepartment(id, data) {
+        return this.request(`/departments/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteDepartment(id) {
+        return this.request(`/departments/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // Excel 导入组织架构和成员
+    async importOrganization(data) {
+        return this.request('/organization/import', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    // Notifications
+    async getNotifications(userId) {
+        if (userId) {
+            return this.request(`/notifications?userId=${userId}`);
+        }
+        return this.request('/notifications');
+    }
+
+    async createNotification(data) {
+        return this.request('/notifications', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async markNotificationRead(id) {
+        return this.request(`/notifications/${id}/read`, {
+            method: 'PUT',
+        });
+    }
+
+    async markAllNotificationsRead(userId) {
+        return this.request('/notifications/read-all', {
+            method: 'PUT',
+            body: JSON.stringify({ userId }),
+        });
+    }
+
+    async deleteNotification(id) {
+        return this.request(`/notifications/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    async clearReadNotifications(userId) {
+        return this.request('/notifications/read', {
+            method: 'DELETE',
+            body: JSON.stringify({ userId }),
+        });
+    }
+
+    async clearAllNotifications(userId) {
+        return this.request('/notifications/all', {
+            method: 'DELETE',
+            body: JSON.stringify({ userId }),
+        });
+    }
+
+    // Risks
+    async getRisks() {
+        return this.request('/risks');
+    }
+
+    async createRisk(data) {
+        return this.request('/risks', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateRisk(id, data) {
+        return this.request(`/risks/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteRisk(id) {
+        return this.request(`/risks/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // Resources
+    async getResources() {
+        return this.request('/resources');
+    }
+
+    async createResource(data) {
+        return this.request('/resources', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateResource(id, data) {
+        return this.request(`/resources/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteResource(id) {
+        return this.request(`/resources/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // Milestones
+    async getMilestones() {
+        return this.request('/milestones');
+    }
+
+    async createMilestone(data) {
+        return this.request('/milestones', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateMilestone(id, data) {
+        return this.request(`/milestones/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteMilestone(id) {
+        return this.request(`/milestones/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // Documents
+    async getDocuments() {
+        return this.request('/documents');
+    }
+
+    async createDocument(data) {
+        return this.request('/documents', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateDocument(id, data) {
+        return this.request(`/documents/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteDocument(id) {
+        return this.request(`/documents/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // Health check
+    async healthCheck() {
+        return this.request('/health');
+    }
+
+    // Get stats
+    async getStats() {
+        return this.request('/stats');
+    }
+
+    // ===== 轻流 BPM 集成 =====
+    async getQingflowConfig() {
+        return this.request('/qingflow/config');
+    }
+
+    async setQingflowConfig(config) {
+        return this.request('/qingflow/config', {
+            method: 'POST',
+            body: JSON.stringify(config),
+        });
+    }
+
+    async testQingflowConnection() {
+        return this.request('/qingflow/test');
+    }
+
+    // ===== 项目类型字典 =====
+    async getProjectTypes() {
+        return this.request('/project-types');
+    }
+
+    async createProjectType(data) {
+        return this.request('/project-types', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateProjectType(id, data) {
+        return this.request(`/project-types/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteProjectType(id) {
+        return this.request(`/project-types/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // ===== 项目阶段字典 =====
+    async getProjectStages(projectTypeId) {
+        const query = projectTypeId ? `?projectTypeId=${projectTypeId}` : '';
+        return this.request(`/project-stages${query}`);
+    }
+
+    async createProjectStage(data) {
+        return this.request('/project-stages', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateProjectStage(id, data) {
+        return this.request(`/project-stages/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteProjectStage(id) {
+        return this.request(`/project-stages/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // 邮箱密码登录：成功后后端种 workbench_session HttpOnly cookie
+    async login(email, password) {
+        const response = await fetch(`${this.baseURL}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Workbench': '1' },
+            credentials: 'include',
+            body: JSON.stringify({ email, password }),
+        });
+        if (!response.ok) {
+            let message = `HTTP ${response.status}: ${response.statusText}`;
+            try {
+                const data = await response.json();
+                if (data && data.error) message = data.error;
+            } catch (e) { /* ignore */ }
+            throw new Error(message);
+        }
+        return await response.json();
+    }
+
+    // 登出：通知后端撤销会话并清 cookie
+    async logout() {
+        try {
+            const response = await fetch(`${this.baseURL}/auth/logout`, {
+                method: 'POST',
+                headers: { 'X-Workbench': '1' },
+                credentials: 'include',
+            });
+            return await response.json();
+        } catch {
+            return { success: false };
+        }
+    }
+
+    // ===== SSO 单点登录 =====
+    // 消费 HttpOnly Cookie 中的一次性 ticket（SSO 302 后由浏览器自动携带，无需在 URL 传参）
+    // 成功后后端种 workbench_session 会话 cookie，后续 API 请求自动携带
+    async ssoConsume() {
+        const response = await fetch(`${this.baseURL}/auth/me`, { method: 'GET', headers: { 'X-Workbench': '1' }, credentials: 'include' });
+        if (!response.ok) {
+            let message = `HTTP ${response.status}: ${response.statusText}`;
+            try {
+                const data = await response.json();
+                if (data && data.error) message = data.error;
+            } catch (e) { /* ignore */ }
+            throw new Error(message);
+        }
+        return await response.json();
+    }
+}
+
+export const apiClient = new ApiClient();
+export default apiClient;
+===== src\pages\ReminderSettingsPage.jsx =====
+import { useState, useEffect } from 'react';
+import {
+  Bell, Clock, AlertTriangle, Calendar, Volume2, Monitor,
+  Save, RotateCcw, CheckCircle, Plug, Zap, AlertCircle,
+} from 'lucide-react';
+import PageContainer from '@/components/layout/PageContainer';
+import Card from '@/components/ui/Card';
+import Button from '@/components/ui/Button';
+import Input from '@/components/ui/Input';
+import { useReminderConfigStore, DEFAULT_REMINDER_CONFIG } from '@/store/useReminderConfigStore';
+import { apiClient } from '@/lib/apiClient';
+import { cn } from '@/lib/utils';
+
+export default function ReminderSettingsPage() {
+  const config = useReminderConfigStore((s) => s.config);
+  const updateConfig = useReminderConfigStore((s) => s.updateConfig);
+  const resetConfig = useReminderConfigStore((s) => s.resetConfig);
+
+  const [local, setLocal] = useState(config);
+  const [saved, setSaved] = useState(false);
+
+  // 轻流 BPM 配置
+  const [bpmConfig, setBpmConfig] = useState({ baseUrl: '', qsourceId: '', frontendBaseUrl: '', ssoSecret: '' });
+  const [bpmSaving, setBpmSaving] = useState(false);
+  const [bpmTesting, setBpmTesting] = useState(false);
+  const [bpmTestResult, setBpmTestResult] = useState(null);
+
+  useEffect(() => {
+    apiClient.getQingflowConfig().then(cfg => {
+      setBpmConfig({
+        baseUrl: cfg.baseUrl || '',
+        qsourceId: cfg.qsourceId || '',
+        frontendBaseUrl: cfg.frontendBaseUrl || '',
+        ssoSecret: cfg.ssoSecret || '',
+      });
+    }).catch(() => {});
+  }, []);
+
+  const handleBpmSave = async () => {
+    setBpmSaving(true);
+    try {
+      await apiClient.setQingflowConfig(bpmConfig);
+      setBpmTestResult({ success: true, message: '配置已保存' });
+    } catch (e) {
+      setBpmTestResult({ success: false, message: '保存失败: ' + e.message });
+    }
+    setBpmSaving(false);
+    setTimeout(() => setBpmTestResult(null), 5000);
+  };
+
+  const handleBpmTest = async () => {
+    setBpmTesting(true);
+    setBpmTestResult(null);
+    try {
+      // 先保存再测试
+      await apiClient.setQingflowConfig(bpmConfig);
+      const result = await apiClient.testQingflowConnection();
+      if (result.success) {
+        setBpmTestResult({ success: true, message: '连接成功，测试消息已发送到轻流' });
+      } else {
+        setBpmTestResult({ success: false, message: result.error || result.errMsg || '连接失败' });
+      }
+    } catch (e) {
+      setBpmTestResult({ success: false, message: '连接失败: ' + e.message });
+    }
+    setBpmTesting(false);
+    setTimeout(() => setBpmTestResult(null), 8000);
+  };
+
+  const set = (key, val) => {
+    setLocal((f) => ({ ...f, [key]: val }));
+    setSaved(false);
+  };
+
+  const handleSave = () => {
+    updateConfig(local);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 3000);
+  };
+
+  const handleReset = () => {
+    setLocal({ ...DEFAULT_REMINDER_CONFIG });
+    resetConfig();
+  };
+
+  const togglePreDueDay = (day) => {
+    const days = [...local.preDueDays].sort((a, b) => a - b);
+    if (days.includes(day)) {
+      set('preDueDays', days.filter((d) => d !== day));
+    } else {
+      set('preDueDays', [...days, day].sort((a, b) => a - b));
+    }
+  };
+
+  const toggleMilestoneDay = (day) => {
+    const days = [...local.milestonePreDays].sort((a, b) => a - b);
+    if (days.includes(day)) {
+      set('milestonePreDays', days.filter((d) => d !== day));
+    } else {
+      set('milestonePreDays', [...days, day].sort((a, b) => a - b));
+    }
+  };
+
+  return (
+    <PageContainer>
+      {/* 保存栏 */}
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-sm text-slate-500">配置到期前提醒、逾期催办等提醒规则</p>
+        <div className="flex items-center gap-2">
+          {saved && (
+            <span className="flex items-center gap-1 text-sm text-green-600">
+              <CheckCircle className="w-4 h-4" />
+              已保存
+            </span>
+          )}
+          <Button size="sm" variant="secondary" onClick={handleReset}>
+            <RotateCcw className="w-4 h-4" />
+            恢复默认
+          </Button>
+          <Button size="sm" onClick={handleSave}>
+            <Save className="w-4 h-4" />
+            保存配置
+          </Button>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {/* 到期前提醒 */}
+        <Card title="到期前提醒" icon={Clock}>
+          <p className="text-sm text-slate-500 mb-3">
+            在任务/待办到期前，提前几天发送提醒通知
+          </p>
+          <div className="flex gap-2 flex-wrap">
+            {[1, 2, 3, 5, 7, 10, 14].map((day) => (
+              <button
+                key={day}
+                onClick={() => togglePreDueDay(day)}
+                className={cn(
+                  'px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors',
+                  local.preDueDays.includes(day)
+                    ? 'bg-amber-500 text-white border-amber-500'
+                    : 'bg-white text-slate-600 border-slate-300 hover:border-amber-400'
+                )}
+              >
+                提前 {day} 天
+              </button>
+            ))}
+          </div>
+        </Card>
+
+        {/* 到期当天 */}
+        <Card title="到期当天提醒" icon={Calendar}>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={local.enableDueDay}
+              onChange={(e) => set('enableDueDay', e.target.checked)}
+              className="w-4 h-4 rounded text-primary-500"
+            />
+            <span className="text-sm text-slate-700">到期当天发送提醒通知</span>
+          </label>
+        </Card>
+
+        {/* 逾期提醒 */}
+        <Card title="逾期提醒" icon={AlertTriangle}>
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={local.enableOverdue}
+                onChange={(e) => set('enableOverdue', e.target.checked)}
+                className="w-4 h-4 rounded text-primary-500"
+              />
+              <span className="text-sm text-slate-700">逾期后发送提醒通知</span>
+            </label>
+
+            <div className="grid grid-cols-2 gap-4 pl-7">
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">
+                  逾期几天后开始催办
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="30"
+                  value={local.escalationDays}
+                  onChange={(e) => set('escalationDays', parseInt(e.target.value) || 3)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">
+                  催办间隔（天）
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="7"
+                  value={local.escalationInterval}
+                  onChange={(e) => set('escalationInterval', parseInt(e.target.value) || 2)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-slate-400 pl-7">
+              逾期 {local.escalationDays} 天后，每 {local.escalationInterval} 天自动发送一次催办通知
+            </p>
+          </div>
+        </Card>
+
+        {/* 里程碑提醒 */}
+        <Card title="里程碑提醒" icon={Bell}>
+          <p className="text-sm text-slate-500 mb-3">
+            在里程碑到达前，提前几天发送提醒通知
+          </p>
+          <div className="flex gap-2 flex-wrap">
+            {[1, 3, 5, 7, 10, 14, 21, 30].map((day) => (
+              <button
+                key={day}
+                onClick={() => toggleMilestoneDay(day)}
+                className={cn(
+                  'px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors',
+                  local.milestonePreDays.includes(day)
+                    ? 'bg-purple-500 text-white border-purple-500'
+                    : 'bg-white text-slate-600 border-slate-300 hover:border-purple-400'
+                )}
+              >
+                提前 {day} 天
+              </button>
+            ))}
+          </div>
+        </Card>
+
+        {/* 通知方式 */}
+        <Card title="通知方式" icon={Monitor}>
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={local.enableBrowserNotif}
+                onChange={(e) => {
+                  set('enableBrowserNotif', e.target.checked);
+                  if (e.target.checked && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+                    Notification.requestPermission();
+                  }
+                }}
+                className="w-4 h-4 rounded text-primary-500"
+              />
+              <div>
+                <span className="text-sm text-slate-700 flex items-center gap-1.5">
+                  <Monitor className="w-4 h-4 text-slate-400" />
+                  浏览器桌面通知
+                </span>
+                <p className="text-xs text-slate-400">在浏览器最小化时也能收到桌面弹窗通知</p>
+              </div>
+            </label>
+
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={local.enableSound}
+                onChange={(e) => set('enableSound', e.target.checked)}
+                className="w-4 h-4 rounded text-primary-500"
+              />
+              <div>
+                <span className="text-sm text-slate-700 flex items-center gap-1.5">
+                  <Volume2 className="w-4 h-4 text-slate-400" />
+                  声音提醒
+                </span>
+                <p className="text-xs text-slate-400">收到新通知时播放提示音</p>
+              </div>
+            </label>
+          </div>
+        </Card>
+
+        {/* 检查频率 */}
+        <Card title="检查频率" icon={Clock}>
+          <div className="flex items-center gap-4">
+            <label className="text-sm text-slate-700">自动检查间隔</label>
+            <select
+              value={local.checkIntervalSec}
+              onChange={(e) => set('checkIntervalSec', parseInt(e.target.value))}
+              className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <option value={30}>30 秒</option>
+              <option value={60}>1 分钟</option>
+              <option value={120}>2 分钟</option>
+              <option value={300}>5 分钟</option>
+              <option value={600}>10 分钟</option>
+            </select>
+            <span className="text-xs text-slate-400">
+              系统每隔此间隔自动检查所有任务、待办和里程碑的到期情况
+            </span>
+          </div>
+        </Card>
+
+        {/* BPM 系统集成 */}
+        <Card title="BPM 推送集成（轻流 Q-Source）" icon={Plug}>
+          <div className="space-y-4">
+            <div className={cn(
+              'flex items-center gap-2 px-3 py-2 rounded-lg text-sm',
+              bpmConfig.qsourceId
+                ? 'bg-green-50 text-green-700 border border-green-200'
+                : 'bg-amber-50 text-amber-700 border border-amber-200'
+            )}>
+              {bpmConfig.qsourceId
+                ? <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
+              <span>
+                {bpmConfig.qsourceId
+                  ? 'Q-Source 已配置，待办/任务将自动推送到轻流'
+                  : 'Q-Source ID 未配置，待办/任务无法推送到轻流 BPM 系统'}
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-400 bg-slate-50 rounded-lg p-2.5">
+              <span className="font-medium text-slate-600">推送用途：</span>将项目工作台的待办事项和任务自动推送到轻流 BPM 系统。
+              <span className="font-medium text-slate-600 ml-2">配置位置：</span>轻流 → 设置 → 数据源 → Q-Source → 复制接口地址中的 UUID。
+              <span className="block mt-1 text-slate-500">注意：此配置仅用于数据推送，不包含组织架构同步功能（组织架构同步配置在「组织架构与成员」页面）。  同步配置与推送配置是两个独立配置。</span>
+            </p>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                轻流服务器地址
+              </label>
+              <Input
+                value={bpmConfig.baseUrl}
+                onChange={(e) => setBpmConfig(f => ({ ...f, baseUrl: e.target.value }))}
+                placeholder="https://your-company.qingflow.com"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                Q-Source ID
+              </label>
+              <Input
+                value={bpmConfig.qsourceId}
+                onChange={(e) => setBpmConfig(f => ({ ...f, qsourceId: e.target.value }))}
+                placeholder="在轻流后台「数据源 → Q-Source」中获取的 UUID"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                登录轻流 → 设置 → 数据源 → Q-Source → 复制接口地址中的 UUID 部分
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                前端访问地址（任务跳转链接）
+              </label>
+              <Input
+                value={bpmConfig.frontendBaseUrl}
+                onChange={(e) => setBpmConfig(f => ({ ...f, frontendBaseUrl: e.target.value }))}
+                placeholder="http://localhost:5173 或内网/公网部署地址"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                责任人收到轻流通知后，点击推送的任务链接将跳转到该地址下的任务详情页。留空则默认 http://localhost:5173（仅本机可访问），部署到服务器后请填写实际可访问地址。
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                SSO 签名密钥（免登录直达）
+              </label>
+              <Input
+                type="password"
+                value={bpmConfig.ssoSecret}
+                onChange={(e) => setBpmConfig(f => ({ ...f, ssoSecret: e.target.value }))}
+                placeholder="HMAC 密钥（任意字符串，部署后请修改默认密钥）"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                用于对推送链接中的责任人身份做 HMAC-SHA256 签名，使责任人点击链接后免登录直达任务详情。留空则使用环境变量 SSO_SECRET 或内置开发密钥。修改后仅对新推送的链接生效，旧链接仍按原密钥校验。
+              </p>
+            </div>
+
+            {bpmTestResult && (
+              <div className={cn(
+                'flex items-center gap-2 px-3 py-2 rounded-lg text-sm',
+                bpmTestResult.success
+                  ? 'bg-green-50 text-green-700 border border-green-200'
+                  : 'bg-red-50 text-red-700 border border-red-200'
+              )}>
+                {bpmTestResult.success
+                  ? <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                  : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
+                <span>{bpmTestResult.message}</span>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <Button size="sm" onClick={handleBpmSave} disabled={bpmSaving}>
+                <Save className="w-4 h-4" />
+                {bpmSaving ? '保存中...' : '保存配置'}
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleBpmTest} disabled={bpmTesting || !bpmConfig.qsourceId}>
+                <Zap className="w-4 h-4" />
+                {bpmTesting ? '测试中...' : '测试连接'}
+              </Button>
+            </div>
+
+            <div className="text-xs text-slate-400 border-t border-slate-100 pt-3">
+              <p className="font-medium text-slate-500 mb-1">字段映射说明</p>
+              <ul className="space-y-0.5 ml-4">
+                <li>• 待办标题 → bt（标题）</li>
+                <li>• 待办描述 → ms（描述）</li>
+                <li>• 负责人 → zrr（责任人邮箱，自动从人员库解析）</li>
+                <li>• 优先级 → yxj（紧急/高/中/低）</li>
+                <li>• 截止日期 → jzrq</li>
+                <li>• 所属项目 → ssxm</li>
+                <li>• 任务链接 → taskUrl（前端直达链接，责任人点击跳转到任务详情填写进度/关闭待办）</li>
+              </ul>
+            </div>
+          </div>
+        </Card>
+      </div>
+    </PageContainer>
+  );
+}
+===== vite.config.js =====
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
+
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
+  server: {
+    host: true,
+    port: 5173,
+    open: true,
+    // 局域网/本地共用：将 /api 代理到本机后端 3000，
+    // 前端使用相对路径 /api，无需硬编码后端 IP，也不会触发 CORS。
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
+    },
+  },
+  build: {
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'charts': ['recharts'],
+          'dnd': ['@hello-pangea/dnd'],
+          'utils': ['date-fns', 'nanoid', 'clsx', 'lucide-react'],
+        },
+      },
+    },
+  },
+});
+===== .env =====
+# VITE_API_URL=http://localhost:3000/api
+# 注意：不要在此写死 localhost/IP 的绝对地址。
+# 局域网共享访问时，前端应使用相对路径 /api（默认值），
+# 由 vite.config.js 的 proxy 把 /api 转发到本机后端 3000。
+# 若写死为 http://localhost:3000/api，局域网其他电脑的浏览器会把
+# localhost 解析为自己本机，导致 /api/members 拉取失败、登录报"密码错误"。
+===== .env.development =====  MISSING
+===== .env.production =====  MISSING

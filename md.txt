@@ -1,0 +1,31 @@
+﻿D:\AI\project-workbench\server\hierarchy.js:5 * 常量 `MAX_DEPTH = 3`、`ROOT = null`。
+D:\AI\project-workbench\server\hierarchy.js:8 const MAX_DEPTH = 3;
+D:\AI\project-workbench\server\hierarchy.js:31 // 无 MAX_DEPTH 硬截断：环完全由 visited 防住，保证深层子树相对深度计算准确
+D:\AI\project-workbench\server\hierarchy.js:79 while (cur && guard <= MAX_DEPTH + 5) {
+D:\AI\project-workbench\server\hierarchy.js:120 MAX_DEPTH,
+D:\AI\project-workbench\server\simple-server.js:576 // 深度超限判定：keep 策略下直属子项目改挂到 target 后是否 > MAX_DEPTH
+D:\AI\project-workbench\server\simple-server.js:579 .some(c => targetLevel + 1 > hierarchy.MAX_DEPTH);
+D:\AI\project-workbench\server\simple-server.js:669 // keep：直属子项目 parentProjectId → target；若改挂后 level > MAX_DEPTH 则递归拍平整棵子树
+D:\AI\project-workbench\server\simple-server.js:675 if (targetLevel + 1 > hierarchy.MAX_DEPTH) {
+D:\AI\project-workbench\server\simple-server.js:875 // (c) 深度校验：改挂后 新父层级 + 1 + 自身子树深度 不得超过 MAX_DEPTH
+D:\AI\project-workbench\server\simple-server.js:879 if (targetLevel + 1 + subtreeDepth > hierarchy.MAX_DEPTH) {
+D:\AI\project-workbench\server\simple-server.js:881 error: `深度超限（改挂后最深 ${targetLevel + 1 + subtreeDepth} 层，最大 ${hierarchy.MAX_DEPTH} 层）`,
+D:\AI\project-workbench\src\components\projects\MergeDialog.jsx:13 import { getChildren, getProjectLevel, MAX_DEPTH } from '@/lib/hierarchy';
+D:\AI\project-workbench\src\components\projects\MergePreview.jsx:43 ⚠️ 深度超限：改挂后部分子项目层级将超出最大深度（MAX_DEPTH），这些子项目将被自动拍平到目标下。
+D:\AI\project-workbench\src\components\projects\ProjectCard.jsx:25 import { MAX_DEPTH } from '@/lib/hierarchy';
+D:\AI\project-workbench\src\components\projects\ProjectCard.jsx:90 const atMaxDepth = getProjectLevel(project.id) >= MAX_DEPTH;
+D:\AI\project-workbench\src\components\projects\ProjectForm.jsx:11 import { MAX_DEPTH, normalizeParent } from '@/lib/hierarchy';
+D:\AI\project-workbench\src\components\projects\ProjectForm.jsx:130 // 深度校验：父项目层级 >= MAX_DEPTH 时禁止再建子项目
+D:\AI\project-workbench\src\components\projects\ProjectForm.jsx:132 const depthExceeded = formData.parentProjectId && parentLevel >= MAX_DEPTH;
+D:\AI\project-workbench\src\components\projects\ProjectForm.jsx:146 alert(`已达最大层级（${MAX_DEPTH} 级），无法在此项目下创建子项目`);
+D:\AI\project-workbench\src\components\projects\ProjectForm.jsx:239 已达最大层级（{MAX_DEPTH} 级），无法在此项目下创建子项目
+D:\AI\project-workbench\src\lib\hierarchy.js:8 *  - `MAX_DEPTH` 默认 3：根(level0) + 最多 3 层子孙 = 4 个展示层级
+D:\AI\project-workbench\src\lib\hierarchy.js:9 *  - 判定「能否再建子项目」：`getProjectLevel(p) < MAX_DEPTH`
+D:\AI\project-workbench\src\lib\hierarchy.js:12 export const MAX_DEPTH = 3;
+D:\AI\project-workbench\src\lib\hierarchy.js:35 // 无 MAX_DEPTH 硬截断：环完全由 visited 防住（数据损坏才有自环），
+D:\AI\project-workbench\src\lib\hierarchy.js:87 while (cur && guard <= MAX_DEPTH + 5) {
+D:\AI\project-workbench\src\pages\ProjectDetailPage.jsx:23 import { MAX_DEPTH } from '@/lib/hierarchy';
+D:\AI\project-workbench\src\pages\ProjectDetailPage.jsx:403 {canManageProject(project) && getProjectLevel(project.id) < MAX_DEPTH && (
+D:\AI\project-workbench\src\pages\ProjectsPage.jsx:15 import { getChildren, collectSubtree, getProjectLevel, getAncestors, MAX_DEPTH } from '@/lib/hierarchy';
+D:\AI\project-workbench\src\pages\ProjectsPage.jsx:236 const canAddSub = canManageProject(project) && level < MAX_DEPTH;
+D:\AI\project-workbench\src\pages\ProjectsPage.jsx:237 const atMaxDepth = level >= MAX_DEPTH;

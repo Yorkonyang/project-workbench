@@ -15,17 +15,30 @@
  *  - 里程碑：所属项目可见
  */
 
-function getUserId(req, url) {
-    // 优先请求头（前端统一附加），其次 query 参数（兼容通知等已有用法）
-    const headerVal = req && req.headers ? (req.headers['x-user-id'] || req.headers['X-User-Id']) : null;
-    if (headerVal) return String(headerVal);
-    if (url && typeof url.searchParams && url.searchParams.get) {
-        const q = url.searchParams.get('userId');
-        if (q) return String(q);
-    }
-    return null;
+/**
+ * 从请求中解析当前用户身份。
+ *
+ * 安全策略（P0 修复）：
+ *  - 仅信任 HttpOnly 会话 cookie（workbench_session）中的 session token，
+ *    该 token 由后端登录（邮箱密码 / SSO）时签发，客户端无法伪造。
+ *  - 不再接受裸 x-user-id 请求头或 query userId 作为身份凭证，
+ *    防止攻击者伪造任意用户身份（含 admin）绕过权限校验。
+ *
+ * @param {import('http').IncomingMessage} req
+ * @returns {string|null} 当前登录用户 id；未登录返回 null
+ */
+function getUserId(req) {
+    const cookieHeader = req && req.headers ? req.headers.cookie : null;
+    if (!cookieHeader) return null;
+    const m = cookieHeader.match(/(?:^|;\s*)workbench_session=([^;]+)/);
+    if (!m) return null;
+    const token = decodeURIComponent(m[1]);
+    const sso = require('./auth');
+    const session = sso.getSession(token);
+    return session ? String(session.userId) : null;
 }
 
+// 兼容旧调用签名（部分路由曾传入 (req, url)）
 function getUserRole(data, userId) {
     if (!userId) return null;
     const m = (data.members || []).find((x) => x.id === userId);

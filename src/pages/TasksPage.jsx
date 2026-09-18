@@ -9,6 +9,7 @@ import TaskKanban from '@/components/tasks/TaskKanban';
 import TaskList from '@/components/tasks/TaskList';
 import TaskForm from '@/components/tasks/TaskForm';
 import TaskProgressModal from '@/components/tasks/TaskProgressModal';
+import ChangeRequestModal from '@/components/tasks/ChangeRequestModal';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useTaskStore } from '@/store/useTaskStore';
@@ -56,6 +57,8 @@ export default function TasksPage() {
   const [editingTask, setEditingTask] = useState(null);
   const [progressTask, setProgressTask] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  // 任务变更申请弹窗（修改计划/废止）：由看板/列表的「修改」「废止」按钮打开
+  const [changeReq, setChangeReq] = useState(null);
 
   // Auto-open progress modal when URL has ?taskId=xxx
   useEffect(() => {
@@ -226,6 +229,8 @@ export default function TasksPage() {
           onEdit={handleEdit}
           onDelete={setDeleteTarget}
           onProgress={handleProgress}
+          onModify={(t) => setChangeReq({ task: t, type: 'modify' })}
+          onAbolish={(t) => setChangeReq({ task: t, type: 'abolish' })}
         />
       ) : (
         <TaskList
@@ -234,6 +239,8 @@ export default function TasksPage() {
           onEdit={handleEdit}
           onDelete={setDeleteTarget}
           onProgress={handleProgress}
+          onModify={(t) => setChangeReq({ task: t, type: 'modify' })}
+          onAbolish={(t) => setChangeReq({ task: t, type: 'abolish' })}
         />
       )}
 
@@ -260,6 +267,15 @@ export default function TasksPage() {
           message={`确定要删除任务「${deleteTarget.title}」吗？此操作不可恢复。`}
           onConfirm={handleDeleteConfirm}
           onClose={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {changeReq && (
+        <ChangeRequestModal
+          task={changeReq.task}
+          type={changeReq.type}
+          onClose={() => setChangeReq(null)}
+          onSubmitted={() => setChangeReq(null)}
         />
       )}
     </PageContainer>

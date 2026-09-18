@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Edit2, Trash2, TrendingUp } from 'lucide-react';
+import { Edit2, Trash2, TrendingUp, Ban } from 'lucide-react';
 import Badge from '@/components/ui/Badge';
 import { useMemberStore } from '@/store/useMemberStore';
 import { useProjectStore } from '@/store/useProjectStore';
@@ -17,7 +17,7 @@ import {
   cn,
 } from '@/lib/utils';
 
-export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress, onRowClick }) {
+export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress, onRowClick, onAbolish }) {
   const members = useMemberStore((s) => s.members);
   const activeProjects = useProjectStore((s) => s.projects.filter((p) => !p.archived));
   const activeProjectIds = new Set(activeProjects.map((p) => p.id));
@@ -138,7 +138,13 @@ export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress
                   {isArchived ? (
                     <span className="text-xs text-slate-400">已归档</span>
                   ) : (
-                    <div className="flex justify-end gap-1">
+                    <div className="flex justify-end items-center gap-1">
+                      {task.abolished && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 text-slate-500">已废止</span>
+                      )}
+                      {task.pendingChange && !task.abolished && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">待评审</span>
+                      )}
                       {canReportTask(task) && (
                         <button
                           onClick={(e) => { stopRow(e); onProgress?.(task); }}
@@ -148,7 +154,8 @@ export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress
                           <TrendingUp className="w-3.5 h-3.5" />
                         </button>
                       )}
-                      {canManageTask(task) && (
+                      {/* 编辑：项目所有者可改字段；「评审中」任务已锁定，不允许再编辑 */}
+                      {canManageTask(task) && task.status !== 'review' && !task.abolished && (
                         <button
                           onClick={(e) => { stopRow(e); onEdit?.(task); }}
                           className="p-1.5 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-600"
@@ -156,12 +163,22 @@ export default function TaskList({ tasks, projects, onEdit, onDelete, onProgress
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
                       )}
-                      {canManageTask(task) && (
+                      {canManageTask(task) && task.status === 'todo' && (
                         <button
                           onClick={(e) => { stopRow(e); onDelete?.(task); }}
                           className="p-1.5 hover:bg-red-50 rounded text-slate-400 hover:text-red-500"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {/* 进行中：废止申请（任务负责人或项目负责人可发起；修改延期走编辑按钮） */}
+                      {task.status === 'in_progress' && (canManageTask(task) || canReportTask(task)) && !task.pendingChange && !task.abolished && (
+                        <button
+                          onClick={(e) => { stopRow(e); onAbolish?.(task); }}
+                          className="p-1.5 hover:bg-red-50 rounded text-slate-400 hover:text-red-500"
+                          title="废止任务"
+                        >
+                          <Ban className="w-3.5 h-3.5" />
                         </button>
                       )}
                     </div>

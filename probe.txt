@@ -1,0 +1,11 @@
+﻿PID=8428 PARENT=29596 CREATED=09/10/2026 18:31:06 CMD="C:\Users\YYG-PC\AppData\Roaming\Tencent\WXWork\WeMailNode_x64\16.20.2.1\WeMailNode_x64\WeMailNode_x64.exe" --tls-min-v1.0 --expose-gc --report-uncaught-exception --report-on-fatalerror --report-directory="C:\Users\YYG-PC\AppData\Roaming\Tencent\WXWork\Log\H5Mail\node_report" "C:\Program Files (x86)\WXWork\5.0.11.6018\wemail\js\main.js" --start-time=1789036265894 --ww-pid=29596 --ww-mail-install-path=QzpcUHJvZ3JhbSBGaWxlcyAoeDg2KVxXWFdvcmtcNS4wLjExLjYwMThcd2VtYWls --ww-appdata-path=QzpcVXNlcnNcWVlHLVBDXEFwcERhdGFcUm9hbWluZw== --ww-version=5.0.11.6018 --qt-pipe-num=14679459296925446929 --ww-pipe-num=3939863427178583919
+PID=34180 PARENT=37704 CREATED=09/10/2026 21:46:52 CMD=
+PID=18156 PARENT=20576 CREATED=09/10/2026 21:46:53 CMD=
+PID=37216 PARENT=23248 CREATED=09/11/2026 08:49:31 CMD=C:\Users\YYG-PC\.workbuddy\binaries\node\versions\22.22.2-3\node.EXE C:\Users\YYG-PC\.workbuddy\plugins\cache\workbuddy-builtin\sheetagent\5.5.6-wb.38337834.g5f969292.h4918b5ced607/mcp/start.mjs
+PID=40984 PARENT=3844 CREATED=09/11/2026 08:49:32 CMD="C:\Users\YYG-PC\.workbuddy\binaries\node\versions\22.22.2-3\node.exe"  C:\Users\YYG-PC\.workbuddy\plugins\cache\workbuddy-builtin\weixinpay\1.6.109/dist/mcp-server.mjs
+PID=35124 PARENT=22248 CREATED=09/11/2026 08:49:32 CMD="C:\Users\YYG-PC\.workbuddy\binaries\node\versions\22.22.2-3\\node.exe"  "C:\Users\YYG-PC\.workbuddy\binaries\node\versions\22.22.2-3\node_modules\npm\bin\npx-cli.js" -y @cloudbase/cloudbase-mcp@latest
+PID=34904 PARENT=39644 CREATED=09/11/2026 08:49:34 CMD="node"   "C:\Users\YYG-PC\AppData\Local\npm-cache\_npx\88d9f76c32260533\node_modules\.bin\\..\@cloudbase\cloudbase-mcp\dist\cli.cjs" 
+PID=44116 PARENT=22376 CREATED=09/11/2026 19:41:01 CMD=
+PID=44712 PARENT=43004 CREATED=09/11/2026 19:41:02 CMD=
+PID=47404 PARENT=38556 CREATED=09/11/2026 21:00:35 CMD=C:\Users\YYG-PC\.workbuddy\binaries\node\versions\22.22.2-3\node.exe node_modules/vite/bin/vite.js --port 5173
+PID=42672 PARENT=1488 CREATED=09/14/2026 10:03:22 CMD=C:\Users\YYG-PC\.workbuddy\binaries\node\versions\22.22.2-3\node.exe server/simple-server.js

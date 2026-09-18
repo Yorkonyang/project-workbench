@@ -1,0 +1,181 @@
+﻿   698:     return await sendToQSource(payload);
+   699: }
+   700: 
+   701: /**
+   702:  * 项目归档通知：推送给被归档项目的所有者/负责人邮箱。
+   703:  * @param {Object} info
+   704:  *   info.project  - 被归档项目对象
+   705:  *   info.tasksUpdated - 级联归档的任务数
+   706:  */
+   707: async function notifyProjectArchived(info) {
+   708:     const { project, tasksUpdated = 0 } = info || {};
+   709:     const ownerEmails = resolveOwnerEmails(project);
+   710:     const signEmail = ownerEmails[0] || '';
+   711: 
+   712:     const payload = {
+   713:         bt: `项目归档：${project?.name || project?.code || '未知'}`,
+   714:         ms: `项目「${project?.name || project?.code}」已归档，级联归档任务 ${tasksUpdated} 项。如需恢复请联系管理员。`,
+   715:         zrr: ownerEmails.join(';'),
+   716:         yxj: '低优先级',
+   717:         jzrq: new Date().toISOString().split('T')[0],
+   718:         ssxm: project?.name || project?.code || '项目工作台',
+   719:         zht: '已归档',
+   720:         taskUrl: buildFrontendUrl(`/projects/${project?.id}`, signEmail, { type: 'project-archived', id: project?.id }),
+   721:     };
+   722: 
+   723:     console.log('[轻流推送] 项目归档通知:', payload);
+   724:     return await sendToQSource(payload);
+   725: }
+   726: 
+   727: async function sendToQSource(payload) {
+   728:     const { baseUrl, qsourceId } = pushConfig;
+   729: 
+   730:     if (!qsourceId) {
+   731:         console.warn('[轻流推送] Q-Source ID 未配置');
+   732:         return { success: false, errCode: -1, errMsg: 'Q-Source ID 未配置' };
+   733:     }
+   734: 
+   735:     const url = `${baseUrl}/api/qsource/${qsourceId}`;
+   736: 
+   737:     try {
+   738:         const result = await qingflowRequest('POST', url, payload);
+   739: 
+   740:         if (result.errCode === 0 || result.errCode === undefined) {
+   741:             console.log('[轻流推送] 推送成功');
+   742:             return { success: true, data: result };
+   743:         }
+   744: 
+   745:         console.error('[轻流推送] 推送失败:', result);
+   746:         return {
+   747:             success: false,
+   748:             errCode: result.errCode,
+   749:             error: `轻流Q-Source错误 [${result.errCode}]: ${result.errMsg || '未知错误'}`,
+   750:             rawData: result
+   751:         };
+   752:     } catch (error) {
+   753:         console.error('[轻流推送] 网络错误:', error.message);
+   754:         return { success: false, errCode: -2, error: `网络错误: ${error.message}` };
+   755:     }
+   756: }
+   757: 
+   758: async function testConnection() {
+   759:     const testPayload = {
+   760:         bt: '[系统测试] 项目工作台集成验证',
+   761:         ms: '这是一条测试消息，用于验证 Q-Source 接口是否正常连接。',
+   762:         zrr: 'user@example.com',
+   763:         yxj: translatePriority('low'),
+   764:         jzrq: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+   765:         ssxm: '项目工作台',
+   766:     };
+   767: 
+   768:     console.log('[轻流推送] 测试消息:', testPayload);
+   769:     return await sendToQSource(testPayload);
+   770: }
+   771: 
+   772: async function addFormData(formData) {
+   773:     console.log('[轻流推送] 表单数据:', formData);
+   774:     return await sendToQSource(formData);
+   775: }
+   776: 
+   777: module.exports = {
+   778:     buildFrontendUrl,
+   779:     getPushConfig,
+   780:     setPushConfig,
+   781:     getSyncConfig,
+   782:     setSyncConfig,
+   783:     getAccessToken,
+   784:     getDepartments,
+   785:     getUsers,
+   786:     syncOrganization,
+   787:     notifyTaskCreated,
+   788:     notifyTodoCreated,
+   789:     notifyOverdue,
+   790:     notifyProjectMerged,
+   791:     notifyProjectArchived,
+   792:     addFormData,
+   793:     testConnection,
+   794: };
+   795: ===== src\lib\apiClient.js =====
+   796: /**
+   797:  * API Client for Project Workbench
+   798:  * 前端与后端 API 交互的封装层
+   799:  */
+   800: 
+   801: // 默认使用相对路径 /api，由 vite 开发服务器代理到后端（localhost:3000），
+   802: // 这样局域网内其他电脑访问时无需把后端地址硬编码成本机 IP，也不会触发 CORS。
+   803: // 生产部署可通过环境变量 VITE_API_URL 覆盖为绝对地址。
+   804: const API_BASE = import.meta.env.VITE_API_URL || '/api';
+   805: 
+   806: class ApiClient {
+   807:     constructor() {
+   808:         this.baseURL = API_BASE;
+   809:     }
+   810: 
+   811:     async request(endpoint, options = {}) {
+   812:         const url = `${this.baseURL}${endpoint}`;
+   813:         const config = {
+   814:             headers: {
+   815:                 'Content-Type': 'application/json',
+   816:                 // S5：自定义头作为 CSRF 纵深防御，后端对写请求校验此头
+   817:                 'X-Workbench': '1',
+   818:                 ...options.headers,
+   819:             },
+   820:             // 身份由后端 HttpOnly 会话 cookie（workbench_session）自动携带，
+   821:             // 客户端不再手动发送 x-user-id 头，防止身份伪造。
+   822:             credentials: 'include',
+   823:             ...options,
+   824:         };
+   825: 
+   826:         try {
+   827:             const response = await fetch(url, config);
+   828:             if (!response.ok) {
+   829:                 // 401 表示会话失效，交由上层提示重新登录
+   830:                 // 优先透传后端返回的错误消息（如排序号冲突提示）
+   831:                 let message = `HTTP ${response.status}: ${response.statusText}`;
+   832:                 try {
+   833:                     const data = await response.json();
+   834:                     if (data && data.error) message = data.error;
+   835:                 } catch (e) { /* 忽略解析失败 */ }
+   836:                 throw new Error(message);
+   837:             }
+   838:             return await response.json();
+   839:         } catch (error) {
+   840:             console.error('API Request Error:', error);
+   841:             throw error;
+   842:         }
+   843:     }
+   844: 
+   845:     // Projects - 归档相关
+   846:     async archiveProject(id, reason, note) {
+   847:         return this.request(`/projects/${id}/archive`, {
+   848:             method: 'POST',
+   849:             body: JSON.stringify({ reason, note }),
+   850:         });
+   851:     }
+   852: 
+   853:     async approveArchive(id) {
+   854:         return this.request(`/projects/${id}/approve-archive`, {
+   855:             method: 'POST',
+   856:         });
+   857:     }
+   858: 
+   859:     async rejectArchive(id) {
+   860:         return this.request(`/projects/${id}/reject-archive`, {
+   861:             method: 'POST',
+   862:         });
+   863:     }
+   864: 
+   865:     async restoreProject(id) {
+   866:         return this.request(`/projects/${id}/restore`, {
+   867:             method: 'POST',
+   868:         });
+   869:     }
+   870: 
+   871:     // 直接归档（项目负责人一键归档，无需审批）
+   872:     async directArchiveProject(id) {
+   873:         return this.request(`/projects/${id}/archive-direct`, {
+   874:             method: 'POST',
+   875:         });
+   876:     }
+   877: 
+   878:     // Projects

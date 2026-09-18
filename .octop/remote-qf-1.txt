@@ -1,0 +1,320 @@
+﻿{0,4} /**
+{0,4}  * 轻流(QingFlow) 集成模块
+{0,4}  * 分为两套独立配置：
+{0,4}  *   1. pushConfig  - Q-Source 推送（推送待办/任务到轻流 BPM）
+{0,4}  *   2. syncConfig  - 开放平台 OAuth（同步组织架构和成员）
+{0,4}  */
+{0,4} 
+{0,4} const https = require('https');
+{0,4} const http = require('http');
+{0,4} const fs = require('fs');
+{0,4} const path = require('path');
+{0,4} const db = require('./db');
+{0,4} 
+{0,4} // 默认密码规则：邮箱 @ 前缀 + 固定后缀 Yj1018!
+{0,4} // 用于轻流同步新成员时的初始密码，成员可登录后自行修改。
+{0,4} const DEFAULT_PASSWORD_SUFFIX = 'Yj1018!';
+{0,4} function buildDefaultPassword(email) {
+{0,4}     const prefix = (email || '').split('@')[0] || 'user';
+{0,4}     return prefix + DEFAULT_PASSWORD_SUFFIX;
+{0,4} }
+{0,4} 
+{0,4} // 配置文件路径（使用绝对路径避免 __dirname 问题）
+{0,4} const CONFIG_PATH = path.resolve('D:/AI/project-workbench/data/qingflow-config.json');
+{0,4} 
+{0,4} // 加载持久化配置
+{0,4} function loadPushConfig() {
+{0,4}     try {
+{0,4}         const data = fs.readFileSync(CONFIG_PATH, 'utf8');
+{0,4}         return JSON.parse(data);
+{0,4}     } catch (e) {
+{0,4}         return { baseUrl: '', qsourceId: '' };
+{0,4}     }
+{0,4} }
+{0,4} 
+{0,4} // 保存配置到文件
+{0,4} function savePushConfig(config) {
+{0,4}     try {
+{0,4}         const dir = path.dirname(CONFIG_PATH);
+{0,4}         if (!fs.existsSync(dir)) {
+{0,4}             fs.mkdirSync(dir, { recursive: true });
+{0,4}         }
+{0,4}         fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+{0,4}     } catch (e) {
+{0,4}         console.error('[轻流配置] 保存失败:', e.message);
+{0,4}     }
+{0,4} }
+{0,4} 
+{0,4} // ===== 推送配置（Q-Source） =====
+{0,4} // 用于将任务/待办推送到轻流 Q-Source 被动数据源
+{0,4} let pushConfig = loadPushConfig();
+{0,4} // 确保结构完整
+{0,4} pushConfig.baseUrl = pushConfig.baseUrl || '';
+{0,4} pushConfig.qsourceId = pushConfig.qsourceId || '';
+{0,4} // 前端可访问地址：责任人在轻流通知中点击链接时跳转到的地址（默认本地，需在生产环境配置为内网/公网地址）
+{0,4} pushConfig.frontendBaseUrl = pushConfig.frontendBaseUrl || '';
+{0,4} 
+{0,4} // ===== 同步配置（开放平台 OAuth） =====
+{0,4} // 用于通过开放平台 API 同步组织架构和成员
+{0,4} let syncConfig = {
+{0,4}     baseUrl: '',          // 开放平台地址（可能与 Q-Source 地址不同）
+{0,4}     appId: '',            // 开放平台应用 AppID
+{0,4}     secret: '',           // 开放平台应用 Secret
+{0,4}     accessToken: '',      // 当前有效的 OAuth Token
+{0,4}     tokenExpiry: 0,       // Token 过期时间戳
+{0,4}     tokenApiPath: '/api/v1/oauth/token',
+{0,4}     deptApiPath: '/api/v1/dept/list',
+{0,4}     userApiPath: '/api/v1/user/list',
+{0,4} };
+{0,4} 
+{0,4} // ===== 推送配置 CRUD =====
+{0,4} function getPushConfig() {
+{0,4}     return { ...pushConfig };
+{0,4} }
+{0,4} 
+{0,4} function setPushConfig(config) {
+{0,4}     pushConfig = { ...pushConfig, ...config };
+{0,4}     // 移除非推送字段
+{0,4}     delete pushConfig.appId;
+{0,4}     delete pushConfig.secret;
+{0,4}     delete pushConfig.accessToken;
+{0,4}     delete pushConfig.tokenExpiry;
+{0,4}     // 持久化保存
+{0,4}     savePushConfig(pushConfig);
+{0,4} }
+{0,4} 
+{0,4} // ===== 同步配置 CRUD =====
+{0,4} function getSyncConfig() {
+{0,4}     return {
+{0,4}         baseUrl: syncConfig.baseUrl,
+{0,4}         appId: syncConfig.appId,
+{0,4}         secret: '******', // 不返回 secret 明文
+{0,4}         tokenExpiry: syncConfig.tokenExpiry,
+{0,4}     };
+{0,4} }
+{0,4} 
+{0,4} function setSyncConfig(config) {
+{0,4}     syncConfig = { ...syncConfig, ...config };
+{0,4}     // 移除非同步字段
+{0,4}     delete syncConfig.qsourceId;
+{0,4} }
+{0,4} 
+{0,4} // ===== 通用 HTTP 请求 =====
+{0,4} function qingflowRequest(method, url, body = null) {
+{0,4}     return new Promise((resolve, reject) => {
+{0,4}         try {
+{0,4}             const parsedUrl = new URL(url);
+{0,4}             const options = {
+{0,4}                 hostname: parsedUrl.hostname,
+{0,4}                 port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+{0,4}                 path: parsedUrl.pathname + (parsedUrl.search || ''),
+{0,4}                 method: method,
+{0,4}                 headers: {
+{0,4}                     'Content-Type': 'application/json',
+{0,4}                 }
+{0,4}             };
+{0,4} 
+{0,4}             const protocol = parsedUrl.protocol === 'https:' ? https : http;
+{0,4}             const req = protocol.request(options, (res) => {
+{0,4}                 let data = '';
+{0,4}                 res.on('data', chunk => data += chunk);
+{0,4}                 res.on('end', () => {
+{0,4}                     try {
+{0,4}                         resolve(JSON.parse(data));
+{0,4}                     } catch (e) {
+{0,4}                         resolve({ raw: data });
+{0,4}                     }
+{0,4}                 });
+{0,4}             });
+{0,4} 
+{0,4}             req.setTimeout(5000, () => {
+{0,4}                 req.destroy(new Error('请求超时(5s)'));
+{0,4}             });
+{0,4} 
+{0,4}             req.on('error', reject);
+{0,4}             if (body) {
+{0,4}                 req.write(JSON.stringify(body));
+{0,4}             }
+{0,4}             req.end();
+{0,4}         } catch (e) {
+{0,4}             reject(new Error(`URL解析失败: ${e.message}`));
+{0,4}         }
+{0,4}     });
+{0,4} }
+{0,4} 
+{0,4} // ===== OAuth Token 获取（同步用） =====
+{0,4} async function getAccessToken() {
+{0,4}     const { baseUrl, appId, secret, tokenApiPath } = syncConfig;
+{0,4} 
+{0,4}     if (syncConfig.accessToken && Date.now() < syncConfig.tokenExpiry) {
+{0,4}         return syncConfig.accessToken;
+{0,4}     }
+{0,4} 
+{0,4}     if (!baseUrl || !appId || !secret) {
+{0,4}         console.error('[轻流OAuth] 缺少配置: baseUrl / appId / secret');
+{0,4}         return null;
+{0,4}     }
+{0,4} 
+{0,4}     const url = `${baseUrl}${tokenApiPath}`;
+{0,4}     console.log('[轻流OAuth] 请求 Token:', url);
+{0,4} 
+{0,4}     try {
+{0,4}         const result = await qingflowRequest('POST', url, {
+{0,4}             app_id: appId,
+{0,4}             secret: secret,
+{0,4}             grant_type: 'client_credentials'
+{0,4}         });
+{0,4} 
+{0,4}         let token = null;
+{0,4}         if (result && result.errCode === 0 && result.data) {
+{0,4}             token = result.data.access_token || result.data.token;
+{0,4}         } else if (result && result.access_token) {
+{0,4}             token = result.access_token;
+{0,4}         } else if (result && result.token) {
+{0,4}             token = result.token;
+{0,4}         }
+{0,4} 
+{0,4}         if (token) {
+{0,4}             const expiresIn = result.expires_in || 7200;
+{0,4}             syncConfig.accessToken = token;
+{0,4}             syncConfig.tokenExpiry = Date.now() + (expiresIn - 60) * 1000;
+{0,4}             console.log('[轻流OAuth] Token 获取成功');
+{0,4}         } else {
+{0,4}             console.error('[轻流OAuth] Token 响应格式异常:', result);
+{0,4}         }
+{0,4} 
+{0,4}         return token;
+{0,4}     } catch (error) {
+{0,4}         console.error('[轻流OAuth] Token 请求失败:', error.message);
+{0,4}         return null;
+{0,4}     }
+{0,4} }
+{0,4} 
+{0,4} // ===== 组织架构获取（同步用） =====
+{0,4} async function getDepartments() {
+{0,4}     const { baseUrl, deptApiPath } = syncConfig;
+{0,4} 
+{0,4}     if (!baseUrl) {
+{0,4}         return { success: false, error: '同步配置中轻流地址未配置' };
+{0,4}     }
+{0,4} 
+{0,4}     const token = await getAccessToken();
+{0,4}     if (!token) {
+{0,4}         return { success: false, error: 'OAuth Token 获取失败，请检查同步配置' };
+{0,4}     }
+{0,4} 
+{0,4}     const url = `${baseUrl}${deptApiPath}`;
+{0,4}     console.log('[轻流同步] 获取组织架构:', url);
+{0,4} 
+{0,4}     const parsedUrl = new URL(url);
+{0,4}     const options = {
+{0,4}         hostname: parsedUrl.hostname,
+{0,4}         port: parsedUrl.port || 443,
+{0,4}         path: parsedUrl.pathname + (parsedUrl.search || ''),
+{0,4}         method: 'GET',
+{0,4}         headers: {
+{0,4}             'Content-Type': 'application/json',
+{0,4}             'Authorization': `Bearer ${token}`
+{0,4}         }
+{0,4}     };
+{0,4} 
+{0,4}     const protocol = parsedUrl.protocol === 'https:' ? https : http;
+{0,4}     return new Promise((resolve) => {
+{0,4}         const req = protocol.request(options, (res) => {
+{0,4}             let data = '';
+{0,4}             res.on('data', chunk => data += chunk);
+{0,4}             res.on('end', () => {
+{0,4}                 try {
+{0,4}                     const parsed = JSON.parse(data);
+{0,4}                     let departments = [];
+{0,4}                     if (Array.isArray(parsed)) departments = parsed;
+{0,4}                     else if (parsed.data && Array.isArray(parsed.data)) departments = parsed.data;
+{0,4}                     else if (parsed.errCode === 0) departments = parsed.data?.list || parsed.data?.departments || [];
+{0,4}                     console.log(`[轻流同步] 组织架构获取成功，共 ${departments.length} 个部门`);
+{0,4}                     resolve({ success: true, departments });
+{0,4}                 } catch (e) {
+{0,4}                     resolve({ success: false, error: `响应解析失败: ${data.slice(0, 200)}` });
+{0,4}                 }
+{0,4}             });
+{0,4}         });
+{0,4}         req.setTimeout(10000, () => req.destroy(new Error('超时10s')));
+{0,4}         req.on('error', err => resolve({ success: false, error: err.message }));
+{0,4}         req.end();
+{0,4}     });
+{0,4} }
+{0,4} 
+{0,4} async function getUsers() {
+{0,4}     const { baseUrl, userApiPath } = syncConfig;
+{0,4} 
+{0,4}     if (!baseUrl) {
+{0,4}         return { success: false, error: '同步配置中轻流地址未配置' };
+{0,4}     }
+{0,4} 
+{0,4}     const token = await getAccessToken();
+{0,4}     if (!token) {
+{0,4}         return { success: false, error: 'OAuth Token 获取失败' };
+{0,4}     }
+{0,4} 
+{0,4}     const url = `${baseUrl}${userApiPath}`;
+{0,4}     console.log('[轻流同步] 获取用户列表:', url);
+{0,4} 
+{0,4}     const parsedUrl = new URL(url);
+{0,4}     const options = {
+{0,4}         hostname: parsedUrl.hostname,
+{0,4}         port: parsedUrl.port || 443,
+{0,4}         path: parsedUrl.pathname + (parsedUrl.search || ''),
+{0,4}         method: 'GET',
+{0,4}         headers: {
+{0,4}             'Content-Type': 'application/json',
+{0,4}             'Authorization': `Bearer ${token}`
+{0,4}         }
+{0,4}     };
+{0,4} 
+{0,4}     const protocol = parsedUrl.protocol === 'https:' ? https : http;
+{0,4}     return new Promise((resolve) => {
+{0,4}         const req = protocol.request(options, (res) => {
+{0,4}             let data = '';
+{0,4}             res.on('data', chunk => data += chunk);
+{0,4}             res.on('end', () => {
+{0,4}                 try {
+{0,4}                     const parsed = JSON.parse(data);
+{0,4}                     let users = [];
+{0,4}                     if (Array.isArray(parsed)) users = parsed;
+{0,4}                     else if (parsed.data && Array.isArray(parsed.data)) users = parsed.data;
+{0,4}                     else if (parsed.errCode === 0) users = parsed.data?.list || parsed.data?.users || [];
+{0,4}                     console.log(`[轻流同步] 用户获取成功，共 ${users.length} 个用户`);
+{0,4}                     resolve({ success: true, users });
+{0,4}                 } catch (e) {
+{0,4}                     resolve({ success: false, error: `响应解析失败: ${data.slice(0, 200)}` });
+{0,4}                 }
+{0,4}             });
+{0,4}         });
+{0,4}         req.setTimeout(10000, () => req.destroy(new Error('超时10s')));
+{0,4}         req.on('error', err => resolve({ success: false, error: err.message }));
+{0,4}         req.end();
+{0,4}     });
+{0,4} }
+{0,4} 
+{0,4} // ===== 组织架构同步（同步用） =====
+{0,4} async function syncOrganization(localData) {
+{0,4}     const { baseUrl } = syncConfig;
+{0,4} 
+{0,4}     if (!baseUrl) {
+{0,4}         return { success: false, error: '同步配置中轻流地址未配置' };
+{0,4}     }
+{0,4} 
+{0,4}     const results = { syncedDepartments: 0, syncedMembers: 0, updatedMembers: 0, errors: [] };
+{0,4} 
+{0,4}     // 1. 同步组织架构
+{0,4}     const deptResult = await getDepartments();
+{0,4}     if (!deptResult.success) {
+{0,4}         return { success: false, error: `获取组织架构失败: ${deptResult.error}`, results };
+{0,4}     }
+{0,4} 
+{0,4}     if (deptResult.departments.length > 0 && localData) {
+{0,4}         if (!localData.departments) localData.departments = [];
+{0,4}         const existingDeptIds = new Set(localData.departments.map(d => d.id));
+{0,4}         let added = 0;
+{0,4} 
+{0,4}         for (const dept of deptResult.departments) {
+{0,4}             const deptId = dept.id || dept.dept_id || dept.department_id;

@@ -11,6 +11,14 @@ const fs = require('fs');
 const path = require('path');
 const db = require('./db');
 
+// 默认密码规则：邮箱 @ 前缀 + 固定后缀 Yj1018!
+// 用于轻流同步新成员时的初始密码，成员可登录后自行修改。
+const DEFAULT_PASSWORD_SUFFIX = 'Yj1018!';
+function buildDefaultPassword(email) {
+    const prefix = (email || '').split('@')[0] || 'user';
+    return prefix + DEFAULT_PASSWORD_SUFFIX;
+}
+
 // 配置文件路径（使用绝对路径避免 __dirname 问题）
 const CONFIG_PATH = path.resolve('D:/AI/project-workbench/data/qingflow-config.json');
 
@@ -378,7 +386,7 @@ async function syncOrganization(localData) {
                     id: userId || `mem_${Date.now()}_${addedMembers}`,
                     name: userName,
                     email: userEmail,
-                    password: (userEmail || userName).split('@')[0] + '123', // 默认密码：邮箱@前部分+123
+                    password: buildDefaultPassword(userEmail), // 默认密码：邮箱 @ 前缀 + Yj1018!
                     phone,
                     departmentId: deptId,
                     role: 'member',

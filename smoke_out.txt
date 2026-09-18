@@ -1,0 +1,58 @@
+==================================================
+Project Workbench API Server
+==================================================
+✅ Server running on http://localhost:4011
+📁 Database: C:\Users\YYG-PC\AppData\Local\Temp\pw_chat_smoke_1789701798155.db
+
+API Endpoints:
+  GET    /api/health       - 健康检查
+  GET    /api/stats        - 统计数据
+  GET    /api/projects     - 获取所有项目
+  POST   /api/projects     - 创建项目
+  PUT    /api/projects/:id - 更新项目
+  DELETE /api/projects/:id - 删除项目
+  GET    /api/projects/:id/tasks - 获取项目任务
+  POST   /api/projects/:id/tasks - 创建任务
+  GET    /api/tasks        - 获取所有任务
+  PUT    /api/tasks/:id    - 更新任务
+  DELETE /api/tasks/:id    - 删除任务（仅待启动可删）
+  POST   /api/tasks/:id/change-request - 提交修改/废止申请
+  POST   /api/tasks/:id/change-review - 评审变更申请
+  GET    /api/todos        - 获取所有待办
+  POST   /api/todos        - 创建待办
+  PUT    /api/todos/:id    - 更新待办
+  DELETE /api/todos/:id    - 删除待办
+  GET    /api/members      - 获取所有成员
+  POST   /api/members      - 创建成员
+  PUT    /api/members/:id  - 更新成员
+  DELETE /api/members/:id  - 删除成员
+  GET    /api/notifications- 获取通知
+  POST   /api/notifications- 创建通知
+  PUT    /api/notifications/:id/read - 标记已读
+  PUT    /api/notifications/read-all - 全部已读
+  DELETE /api/notifications/:id - 删除通知
+  DELETE /api/notifications/read - 清除已读
+  DELETE /api/notifications/all - 清空全部
+  GET/POST/PUT/DELETE /api/risks       - 风险 CRUD
+  GET/POST/PUT/DELETE /api/resources   - 资源 CRUD
+  GET/POST/PUT/DELETE /api/milestones  - 里程碑 CRUD
+  GET/POST/PUT/DELETE /api/documents   - 文档 CRUD
+  GET/POST/PUT/DELETE /api/project-types - 项目类型字典
+  GET/POST/PUT/DELETE /api/project-stages - 项目阶段字典
+==================================================
+PASS | 未登录 GET /directs → 401 | status=401
+FAIL | GET 不存在 peer 消息 → 404 | status=500
+FAIL | POST 不存在 peer → 404 | status=500
+FAIL | 给自己发 → 400 | status=500
+FAIL | A→B 发送 → 200 且含 senderName | status=500 senderName=undefined
+FAIL | B unread directTotal≥1 | directTotal=0
+FAIL | B unread byPeer[A]≥1 | byPeer[A]=undefined
+   unread.total=0 directTotal=0 byPeer={}
+FAIL | SSE dmessage 到达 B | gotDmessage=false
+FAIL | A 撤回自己消息 → 200 | status=500 recalled=undefined
+FAIL | B 撤回他人消息 → 403 | status=500
+FAIL | B 单聊列表含 A | listLen=0
+FAIL | 生产库零写入 | hashSame=false mtimeSame=false
+
+==== SMOKE SUMMARY ====
+TOTAL=12 PASS=1 FAIL=11

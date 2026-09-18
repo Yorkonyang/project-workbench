@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Pencil, Trash2, Calendar, User, Archive } from 'lucide-react';
+import { Pencil, Trash2, Calendar, User, Archive, Ban } from 'lucide-react';
 import Badge from '@/components/ui/Badge';
 import { cn } from '@/lib/utils';
 import { useMemberStore } from '@/store/useMemberStore';
@@ -13,12 +13,17 @@ const PRIORITY_CONFIG = {
   low: { label: '低', variant: 'info' },
 };
 
-export default function TaskCard({ task, project, onEdit, onDelete, onProgress, isArchived = false, bgClass, borderClass }) {
+export default function TaskCard({ task, project, onEdit, onDelete, onProgress, onAbolish, isArchived = false, bgClass, borderClass }) {
   const members = useMemberStore((s) => s.members);
   const departments = useOrgStore((s) => s.getAllDepartments());
   const { canManageTask, canReportTask } = useAccess();
-  const canEdit = canManageTask(task);   // 仅项目所有者可编辑/删除任务
+  // 编辑：仅项目所有者可改字段；且「评审中」任务已锁定，不允许再编辑
+  const canEdit = canManageTask(task) && task.status !== 'review' && !task.abolished;
   const canReport = canReportTask(task); // 所有者或任务责任人(成员)可汇报
+  // 进行中任务：项目负责人或任务责任人可发起「废止」申请（已有待审或已废止则不再显示）
+  // 修改延期仍走「编辑」按钮（编辑表单可改截止日期），不再单独提供「修改计划」按钮
+  const canAbolish =
+    task.status === 'in_progress' && (canManageTask(task) || canReportTask(task)) && !task.pendingChange && !task.abolished;
   const priorityConfig = PRIORITY_CONFIG[task.priority] || PRIORITY_CONFIG.medium;
 
   // 部门颜色映射
@@ -57,7 +62,7 @@ export default function TaskCard({ task, project, onEdit, onDelete, onProgress, 
       {/* 右上角：优先级常驻 + 编辑/删除 hover 显示（紧贴优先级左侧） */}
       {!isArchived && (
         <div className="absolute top-2 right-2 flex items-center gap-1 z-10">
-          {/* 编辑/删除按钮：hover 时显示在优先级左侧 */}
+          {/* 编辑（项目负责人可改字段）：hover 显示 */}
           {canEdit && (
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-smooth">
               <button
@@ -70,17 +75,45 @@ export default function TaskCard({ task, project, onEdit, onDelete, onProgress, 
               >
                 <Pencil className="w-3.5 h-3.5" />
               </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete?.(task);
-                }}
-                className="p-1.5 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-600 transition-smooth"
-                title="删除任务"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
+              {/* 删除：仅「待启动」任务可删（进行中及之后状态锁定，防误删） */}
+              {task.status === 'todo' && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete?.(task);
+                  }}
+                  className="p-1.5 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-600 transition-smooth"
+                  title="删除任务"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
+          )}
+          {/* 已废止徽标 */}
+          {task.abolished && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 text-slate-500">
+              已废止
+            </span>
+          )}
+          {/* 待评审徽标 */}
+          {task.pendingChange && !task.abolished && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
+              待评审
+            </span>
+          )}
+          {/* 进行中：废止申请按钮（任务负责人或项目负责人可发起；修改延期走编辑按钮） */}
+          {canAbolish && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAbolish?.(task);
+              }}
+              className="p-1.5 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-600 transition-smooth"
+              title="废止任务"
+            >
+              <Ban className="w-3.5 h-3.5" />
+            </button>
           )}
           {/* 优先级常驻显示 */}
           <Badge variant={priorityConfig.variant} size="xs">
@@ -109,7 +142,7 @@ export default function TaskCard({ task, project, onEdit, onDelete, onProgress, 
       )}
 
       {/* 标题：与描述同宽（去掉 pr-10，右上角已 absolute 不占布局空间） */}
-      <h4 className="text-sm font-semibold text-slate-800 mb-1 break-words">{task.title}</h4>
+      <h4 className={cn('text-sm font-semibold mb-1 break-words', task.abolished ? 'text-slate-400 line-through' : 'text-slate-800')}>{task.title}</h4>
 
       {/* 描述：现在右侧和左侧 padding 一致（编辑按钮已绝对定位） */}
       {task.description && (

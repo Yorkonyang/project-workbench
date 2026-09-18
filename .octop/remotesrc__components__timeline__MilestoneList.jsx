@@ -1,0 +1,98 @@
+import { Flag, Edit2, Trash2 } from 'lucide-react';
+import Card from '@/components/ui/Card';
+import Badge from '@/components/ui/Badge';
+import ProjectBreadcrumb from '@/components/projects/ProjectBreadcrumb';
+import { getMilestoneStatusConfig, formatDate, getProjectColor } from '@/lib/utils';
+import { isMilestoneDone } from '@/config/theme';
+import { useAccess } from '@/hooks/useAccess';
+import { getLevel } from '@/lib/hierarchy';
+
+export default function MilestoneList({ milestones, projects, onEdit, onDelete }) {
+  const { canManageMilestone } = useAccess();
+  const sorted = [...milestones].sort((a, b) => a.date.localeCompare(b.date));
+
+  return (
+    <Card title="里程碑列表">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
+              <th className="py-2 px-3 font-medium">里程碑</th>
+              <th className="py-2 px-3 font-medium">项目</th>
+              <th className="py-2 px-3 font-medium hidden lg:table-cell">层级</th>
+              <th className="py-2 px-3 font-medium">日期</th>
+              <th className="py-2 px-3 font-medium">状态</th>
+              <th className="py-2 px-3 font-medium hidden md:table-cell">交付物</th>
+              <th className="py-2 px-3 font-medium text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((ms) => {
+              const config = getMilestoneStatusConfig(ms.status);
+              const project = projects?.find((p) => p.id === ms.projectId);
+              const done = isMilestoneDone(ms);
+              return (
+                <tr key={ms.id} className="border-b border-slate-50 hover:bg-slate-50">
+                  <td className="py-2.5 px-3">
+                    <div className="flex items-center gap-1.5">
+                      {/* 已完成：实体小旗（填充），否则：空心旗 */}
+                      <Flag
+                        className={`w-4 h-4 ${done ? 'drop-shadow-sm' : ''}`}
+                        style={{
+                          color: done ? '#10b981' : config.color,
+                          fill: done ? '#10b981' : 'none',
+                          strokeWidth: done ? 0 : 2,
+                        }}
+                      />
+                      <span className={`font-medium ${done ? 'text-slate-900' : 'text-slate-800'}`}>{ms.title}</span>
+                      {ms.isCritical && <Badge variant="danger" className="text-xs">关键</Badge>}
+                    </div>
+                  </td>
+                  <td className="py-2.5 px-3">
+                    {project && (
+                      <span className="flex items-center gap-1 text-xs text-slate-600 font-mono">
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: project.color }} />
+                        <span className="whitespace-pre">{'  '.repeat(getLevel(projects || [], project.id) * 2)}</span>
+                        {project.code}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2.5 px-3 hidden lg:table-cell">
+                    <ProjectBreadcrumb projectId={ms.projectId} projects={projects} includeSelf={false} className="max-w-[200px]" />
+                  </td>
+                  <td className="py-2.5 px-3 text-slate-500">{formatDate(ms.date)}</td>
+                  <td className="py-2.5 px-3">
+                    <Badge variant="default" className={config.bgClass + ' ' + config.textClass}>
+                      {config.label}
+                    </Badge>
+                  </td>
+                  <td className="py-2.5 px-3 hidden md:table-cell text-xs text-slate-400 max-w-xs truncate">
+                    {ms.deliverables || '-'}
+                  </td>
+                  <td className="py-2.5 px-3 text-right">
+                    {canManageMilestone(ms) && (
+                    <div className="flex justify-end gap-1">
+                      <button
+                        onClick={() => onEdit?.(ms)}
+                        className="p-1.5 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-600"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => onDelete?.(ms)}
+                        className="p-1.5 hover:bg-red-50 rounded text-slate-400 hover:text-red-500"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}

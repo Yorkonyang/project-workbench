@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Calendar, User, Flag, CheckSquare, FolderOpen, AlertTriangle, Users, Edit2, Plus, Archive, Bell, Clock, Trash2, GitMerge, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Calendar, User, Flag, CheckSquare, FolderOpen, AlertTriangle, Users, Edit2, Plus, Archive, Bell, Clock, Trash2, GitMerge, RotateCcw, MessageSquare } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
@@ -18,6 +18,7 @@ import RiskList from '@/components/risks/RiskList';
 import TodoForm from '@/components/todos/TodoForm';
 import ProjectForm from '@/components/projects/ProjectForm';
 import MergeDialog from '@/components/projects/MergeDialog';
+import ChatWindow from '@/components/chat/ChatWindow';
 import { getProjectStatusConfig, getPriorityConfig, dueDateLabel, isOverdue, formatDate, cn } from '@/lib/utils';
 import { useProjectStore } from '@/store/useProjectStore';
 import { MAX_DEPTH } from '@/lib/hierarchy';
@@ -29,6 +30,7 @@ import { useMilestoneStore } from '@/store/useMilestoneStore';
 import { useDocumentStore } from '@/store/useDocumentStore';
 import { useRiskStore } from '@/store/useRiskStore';
 import { useMemberStore } from '@/store/useMemberStore';
+import { useChatStore } from '@/store/useChatStore';
 import { useAccess } from '@/hooks/useAccess';
 import { apiClient } from '@/lib/apiClient';
 import { ROLES } from '@/config/permissions';
@@ -40,6 +42,7 @@ const TABS = [
   { key: 'todos', label: '待办', icon: Bell },
   { key: 'documents', label: '文档', icon: FolderOpen },
   { key: 'risks', label: '风险', icon: AlertTriangle },
+  { key: 'chat', label: '群聊', icon: MessageSquare },
   { key: 'members', label: '成员', icon: User },
 ];
 
@@ -77,6 +80,8 @@ export default function ProjectDetailPage() {
   const updateDocument = useDocumentStore((s) => s.updateDocument);
   const deleteDocument = useDocumentStore((s) => s.deleteDocument);
   const { canManageProject, canMergeProject } = useAccess();
+  // 本群聊未读数（Tab 角标）
+  const chatUnread = useChatStore((s) => s.unreadByProject[id] || 0);
   const getSubtreeStats = useProjectStore((s) => s.getSubtreeStats);
   const getProjectLevel = useProjectStore((s) => s.getProjectLevel);
   const mergeProject = useProjectStore((s) => s.mergeProject);
@@ -516,6 +521,11 @@ export default function ProjectDetailPage() {
             >
               <Icon className="w-4 h-4" />
               {tab.label}
+              {tab.key === 'chat' && chatUnread > 0 ? (
+                <span className="ml-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-medium flex items-center justify-center">
+                  {chatUnread > 99 ? '99+' : chatUnread}
+                </span>
+              ) : null}
             </button>
           );
         })}
@@ -926,6 +936,10 @@ export default function ProjectDetailPage() {
 
       {activeTab === 'risks' && (
         <RiskList risks={risks} projects={allProjects} />
+      )}
+
+      {activeTab === 'chat' && (
+        <ChatWindow projectId={id} height="560px" />
       )}
 
       {activeTab === 'members' && (

@@ -15,8 +15,10 @@ import {
   FolderKanban,
   BookOpen,
   Building2,
+  MessageSquare,
 } from 'lucide-react';
 import { useProjectStore } from '@/store/useProjectStore';
+import { useChatStore } from '@/store/useChatStore';
 import { useAccess } from '@/hooks/useAccess';
 import { cn } from '@/lib/utils';
 
@@ -27,6 +29,7 @@ const NAV_ITEMS = [
   { path: '/timeline', label: '时间线', icon: Calendar },
   { path: '/documents', label: '文档管理', icon: FolderOpen },
   { path: '/todos', label: '待办提醒', icon: Bell },
+  { path: '/messages', label: '项目群聊', icon: MessageSquare },
   { path: '/risks', label: '风险管理', icon: AlertTriangle },
 ];
 
@@ -47,6 +50,8 @@ export default function Sidebar({ isOpen, onClose }) {
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const { isAdmin, isProjectOwner } = useAccess();
+  // 群聊未读总数（侧边栏红点）
+  const unreadTotal = useChatStore((s) => s.unreadTotal);
 
   // 当前用户是任意一个项目的负责人/管理员
   const isAnyProjectOwner =
@@ -139,6 +144,16 @@ export default function Sidebar({ isOpen, onClose }) {
                   )}
                   <Icon className="w-5 h-5 shrink-0" />
                   {!collapsed && <span className="whitespace-nowrap">{item.label}</span>}
+                  {/* 项目群聊未读角标 */}
+                  {item.path === '/messages' && unreadTotal > 0 ? (
+                    collapsed ? (
+                      <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500" />
+                    ) : (
+                      <span className="ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-medium flex items-center justify-center">
+                        {unreadTotal > 99 ? '99+' : unreadTotal}
+                      </span>
+                    )
+                  ) : null}
                 </NavLink>
               );
             })}

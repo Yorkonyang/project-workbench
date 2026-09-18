@@ -7,6 +7,7 @@ import TimelinePage from '@/pages/TimelinePage';
 import DocumentsPage from '@/pages/DocumentsPage';
 import TodosPage from '@/pages/TodosPage';
 import RisksPage from '@/pages/RisksPage';
+import MessagesPage from '@/pages/MessagesPage';
 import ProjectDetailPage from '@/pages/ProjectDetailPage';
 import ProjectsPage from '@/pages/ProjectsPage';
 import TaskDetailPage from '@/pages/TaskDetailPage';
@@ -168,6 +169,7 @@ export default function App() {
           <Route path="/documents" element={<DocumentsPage />} />
           <Route path="/todos" element={<TodosPage />} />
           <Route path="/risks" element={<RisksPage />} />
+          <Route path="/messages" element={<MessagesPage />} />
           <Route path="/members" element={<MembersPage />} />
           <Route path="/reminder-settings" element={<ReminderSettingsPage />} />
           <Route path="/dictionary" element={<DictionaryPage />} />
@@ -213,7 +215,6 @@ function SsoCallback() {
         useAuthStore.getState().ssoLogin({
           userId: me.userId,
           email: me.email,
-          ssoTicket: '',
         });
         try {
           await useMemberStore.getState().fetchMembers();
