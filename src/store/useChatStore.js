@@ -48,6 +48,9 @@ export const useChatStore = create(
       unreadTotal: 0,
       unreadByProject: {},
       mentionByProject: {},
+      // 单聊未读的项目维度派生视图（供页面把"群未读 + 该项目单聊未读"合并到项目行红点）
+      unreadByProjectDirect: {},   // projectId -> 该项目下单聊未读聚合
+      orphanDirectUnread: 0,       // projectId=null 桶（旧数据）单聊未读总数
       // ---- V2 单聊状态（按项目隔离：复合 key `${peerId}#${projectId}`）----
       directConversations: [],     // 单聊会话列表（每项带 projectId）
       messagesByPeer: {},         // `${peerId}#${projectId}` -> 消息数组（升序）
@@ -87,6 +90,9 @@ export const useChatStore = create(
             mentionByProject: (res && res.mentionByProject) || {},
             directTotal: (res && res.directTotal) || 0,
             unreadByPeer: (res && res.byPeer) || {},
+            // 单聊未读的项目维度派生视图（服务端 byProjectDirect/orphanDirect，total 未重复计数）
+            unreadByProjectDirect: (res && res.byProjectDirect) || {},
+            orphanDirectUnread: (res && res.orphanDirect) || 0,
           });
         } catch (err) {
           // 未读兜底轮询失败静默处理，不打扰用户
@@ -372,8 +378,20 @@ export const useChatStore = create(
           const unreadByPeer = { ...s.unreadByPeer };
           const cleared = unreadByPeer[key] || 0;
           delete unreadByPeer[key];
+          // 同步扣减项目维度派生视图（项目内多 peer 时只扣本 peer 的 cleared）
+          const unreadByProjectDirect = { ...s.unreadByProjectDirect };
+          let orphanDirectUnread = s.orphanDirectUnread || 0;
+          if (projectId != null) {
+            const left = Math.max(0, (unreadByProjectDirect[projectId] || 0) - cleared);
+            if (left > 0) unreadByProjectDirect[projectId] = left;
+            else delete unreadByProjectDirect[projectId];
+          } else {
+            orphanDirectUnread = Math.max(0, orphanDirectUnread - cleared);
+          }
           return {
             unreadByPeer,
+            unreadByProjectDirect,
+            orphanDirectUnread,
             directTotal: Math.max(0, (s.directTotal || 0) - cleared),
             unreadTotal: Math.max(0, (s.unreadTotal || 0) - cleared),
           };
@@ -429,6 +447,8 @@ export const useChatStore = create(
           let unreadTotal = s.unreadTotal;
           let directTotal = s.directTotal;
           let unreadByPeer = s.unreadByPeer;
+          let unreadByProjectDirect = s.unreadByProjectDirect;
+          let orphanDirectUnread = s.orphanDirectUnread || 0;
 
           // me 为空（登录态未就绪）时无法判定"对方"，跳过未读计数：
           // 否则 fromId=me 的消息会被误挂到自身 key，产生消不掉的"自己"红点。
@@ -436,8 +456,13 @@ export const useChatStore = create(
             unreadTotal = (unreadTotal || 0) + 1;
             directTotal = (directTotal || 0) + 1;
             unreadByPeer = { ...unreadByPeer, [key]: (unreadByPeer[key] || 0) + 1 };
+            if (pProj != null) {
+              unreadByProjectDirect = { ...unreadByProjectDirect, [pProj]: (unreadByProjectDirect[pProj] || 0) + 1 };
+            } else {
+              orphanDirectUnread += 1;
+            }
           }
-          return { messagesByPeer, unreadTotal, directTotal, unreadByPeer };
+          return { messagesByPeer, unreadTotal, directTotal, unreadByPeer, unreadByProjectDirect, orphanDirectUnread };
         });
         get().upsertDirectPreview(message);
       },
@@ -578,6 +603,8 @@ export const useChatStore = create(
           unreadTotal: 0,
           unreadByProject: {},
           mentionByProject: {},
+          unreadByProjectDirect: {},
+          orphanDirectUnread: 0,
           // V2 单聊字段全部重置
           directConversations: [],
           messagesByPeer: {},

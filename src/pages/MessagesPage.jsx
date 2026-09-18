@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { format, isToday } from 'date-fns';
-import { Search, MessageSquare, ArrowLeft, Loader2, ChevronRight, User } from 'lucide-react';
+import { Search, MessageSquare, ArrowLeft, Loader2, ChevronRight, User, History } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import EmptyState from '@/components/ui/EmptyState';
 import ChatWindow from '@/components/chat/ChatWindow';
@@ -45,6 +45,8 @@ export default function MessagesPage() {
   const activePeerId = useChatStore((s) => s.activePeerId);
   const activePeerProjectId = useChatStore((s) => s.activePeerProjectId);
   const unreadByProject = useChatStore((s) => s.unreadByProject);
+  const unreadByProjectDirect = useChatStore((s) => s.unreadByProjectDirect);
+  const orphanDirectUnread = useChatStore((s) => s.orphanDirectUnread);
   const unreadByPeer = useChatStore((s) => s.unreadByPeer);
   const directConversations = useChatStore((s) => s.directConversations);
   const fetchConversations = useChatStore((s) => s.fetchConversations);
@@ -123,15 +125,52 @@ export default function MessagesPage() {
     setExpanded((prev) => ({ ...prev, [pid]: !prev[pid] }));
   };
 
+  // projectId=null 桶（旧数据）的单聊会话：为「其他单聊（历史）」入口提供 peer 列表。
+  // 合并两个来源：directConversations（含 lastMessage/unread）与 unreadByPeer 里 key 形如 `peerId#` 的项。
+  const orphanConversations = useMemo(() => {
+    const selfKey = currentUserId ? String(currentUserId) : '';
+    const map = {}; // peerId -> { peerId, unread, lastMessageAt }
+    (directConversations || []).forEach((c) => {
+      if (c.projectId != null) return; // 只要 null 桶
+      if (!c.peerId || String(c.peerId) === selfKey) return;
+      const prev = map[c.peerId];
+      map[c.peerId] = {
+        peerId: c.peerId,
+        unread: c.unreadCount || 0,
+        lastMessageAt: (prev && prev.lastMessageAt) || c.lastMessageAt || null,
+      };
+    });
+    Object.keys(unreadByPeer || {}).forEach((k) => {
+      if (!k.endsWith('#')) return; // 只要空 projectId 桶
+      const peerId = k.slice(0, -1);
+      if (!peerId) return;
+      if (selfKey && peerId === selfKey) return;
+      const prev = map[peerId] || { peerId, unread: 0, lastMessageAt: null };
+      map[peerId] = { ...prev, unread: unreadByPeer[k] || 0 };
+    });
+    return Object.values(map).sort(
+      (a, b) => new Date(b.lastMessageAt || 0).getTime() - new Date(a.lastMessageAt || 0).getTime()
+    );
+  }, [directConversations, unreadByPeer, currentUserId]);
+
   // 项目成员卡片（过滤掉自己），用于二级菜单
   // 加固：登录态未就绪（currentUserId 为空）时直接返回空列表，不渲染成员卡片，
   // 避免"自己"混入二级菜单（空串/ null 下 String(m.id) !== String(currentUserId) 恒为 true，过滤会失效）。
+  // 根治：名单 = 项目派生成员（c.memberIds）∪ 该项目下与我有单聊往来者（c.dmPeers），
+  //       保证"有往来必有入口"；非派生成员（仅凭单聊往来进入）打 __directOnly 标记。
   const membersOf = (c) => {
     if (!currentUserId) return [];
-    const ids = c.memberIds || [];
-    return ids
+    const derived = (c.memberIds || [])
       .map((id) => allMembers.find((m) => m.id === id))
-      .filter((m) => m && String(m.id) !== String(currentUserId));
+      .filter((m) => m && String(m.id) !== String(currentUserId))
+      .map((m) => ({ ...m, __directOnly: false }));
+    const seen = new Set(derived.map((m) => String(m.id)));
+    const extra = (c.dmPeers || [])
+      .filter((id) => id && String(id) !== String(currentUserId) && !seen.has(String(id)))
+      .map((id) => allMembers.find((m) => m.id === id))
+      .filter((m) => m)
+      .map((m) => ({ ...m, __directOnly: true }));
+    return [...derived, ...extra];
   };
 
   const handleSelectProject = (pid) => {
@@ -145,6 +184,13 @@ export default function MessagesPage() {
     openPeer(peerId, pid);
     closeProject();
     setSearchParams({ peer: peerId, project: pid });
+  };
+
+  // 历史（无项目归属）单聊选中：projectId=null 桶，URL 只带 ?peer=
+  const handleSelectOrphan = (peerId) => {
+    openPeer(peerId, null);
+    closeProject();
+    setSearchParams({ peer: peerId });
   };
 
   const handleBack = () => {
@@ -192,11 +238,14 @@ export default function MessagesPage() {
               </div>
             ) : error ? (
               <div className="p-4 text-sm text-red-500">{error}</div>
-            ) : filtered.length === 0 ? (
+            ) : filtered.length === 0 && orphanConversations.length === 0 ? (
               <div className="p-6 text-center text-sm text-slate-400">暂无可参与的群聊</div>
             ) : (
-              filtered.map((c) => {
-                const unread = unreadByProject[c.projectId] || 0;
+              <>
+              {filtered.map((c) => {
+                // 项目行红点 = 群聊未读 + 该项目单聊未读（语义 = 点开后能看到的消息数）
+                const unread =
+                  (unreadByProject[c.projectId] || 0) + (unreadByProjectDirect[c.projectId] || 0);
                 const isActiveProject = c.projectId === activeProjectId && !activePeerId;
                 const isExpanded = Boolean(expanded[c.projectId]);
                 const members = membersOf(c);
@@ -277,7 +326,14 @@ export default function MessagesPage() {
                                 >
                                   {(m.name || '?').charAt(0)}
                                 </span>
-                                <span className="flex-1 min-w-0 text-sm text-slate-700 truncate">{m.name}</span>
+                                <span className="flex-1 min-w-0 text-sm text-slate-700 truncate">
+                                  {m.name}
+                                </span>
+                                {m.__directOnly ? (
+                                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] leading-none bg-slate-200 text-slate-500">
+                                    单聊
+                                  </span>
+                                ) : null}
                                 {pu > 0 ? (
                                   <span className="shrink-0 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[10px] font-medium flex items-center justify-center">
                                     {badgeText(pu)}
@@ -291,7 +347,79 @@ export default function MessagesPage() {
                     ) : null}
                   </div>
                 );
-              })
+              })}
+              {/* 「其他单聊（历史）」入口：projectId=null 桶（旧数据）的兜底入口，消灭最后一种死红点 */}
+              {orphanConversations.length > 0 ? (
+                <div className="border-b border-slate-50">
+                  <div className="flex items-stretch hover:bg-slate-50">
+                    <button
+                      type="button"
+                      onClick={() => toggleExpand('__orphan__')}
+                      className="flex items-center justify-center w-8 shrink-0 text-slate-400 hover:text-slate-600"
+                      title={expanded['__orphan__'] ? '收起' : '展开'}
+                    >
+                      <ChevronRight
+                        className={cn('w-4 h-4 transition-transform', expanded['__orphan__'] ? 'rotate-90' : '')}
+                      />
+                    </button>
+                    <div className="flex-1 flex items-center gap-3 px-2 py-3">
+                      <span className="w-10 h-10 rounded-lg flex items-center justify-center text-white shrink-0 bg-slate-400">
+                        <History className="w-5 h-5" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-slate-800 truncate">其他单聊（历史）</span>
+                          {orphanDirectUnread > 0 ? (
+                            <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-medium flex items-center justify-center">
+                              {badgeText(orphanDirectUnread)}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="flex items-center justify-between gap-2 mt-0.5">
+                          <span className="text-xs text-slate-400 truncate">未归属项目的历史消息</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {expanded['__orphan__'] ? (
+                    <div className="bg-slate-50/60 max-h-60 overflow-y-auto">
+                      {orphanConversations.map((o) => {
+                        const m = allMembers.find((x) => x.id === o.peerId);
+                        const oUnread = directUnreadMap[peerKey(o.peerId, null)] || o.unread || 0;
+                        const isActivePeer =
+                          activePeerId === o.peerId && activePeerProjectId === null;
+                        const name = m ? m.name : '成员';
+                        const color = m ? (m.avatarColor || '#6b7280') : '#6b7280';
+                        return (
+                          <button
+                            key={peerKey(o.peerId, null)}
+                            type="button"
+                            onClick={() => handleSelectOrphan(o.peerId)}
+                            className={cn(
+                              'w-full flex items-center gap-2.5 pl-10 pr-3 py-2 text-left',
+                              isActivePeer ? 'bg-primary-50' : 'hover:bg-white'
+                            )}
+                          >
+                            <span
+                              className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-bold shrink-0"
+                              style={{ backgroundColor: color }}
+                            >
+                              {name.charAt(0)}
+                            </span>
+                            <span className="flex-1 min-w-0 text-sm text-slate-700 truncate">{name}</span>
+                            {oUnread > 0 ? (
+                              <span className="shrink-0 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[10px] font-medium flex items-center justify-center">
+                                {badgeText(oUnread)}
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              </>
             )}
           </div>
         </div>

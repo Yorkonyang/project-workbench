@@ -297,7 +297,17 @@ function isChatPath(pathname) {
 }
 
 /**
- * 计算项目群成员 id 集合：owner + manager + member.projectIds 含该项目者 + 该项目任务的 assignee。
+ * 计算项目群成员 id 集合（**只增不减**，保持向后兼容）。
+ *
+ * 来源（并集，去重）：
+ *   1. project.ownerId / project.manager
+ *   2. member.projectIds 命中该项目者
+ *   3. 该项目任务的 assignee / assignees
+ *   4. 项目记录上的显式成员字段（project.members / project.memberIds / project.team，
+ *      元素兼容 id 字符串与 { id } 对象）—— 当前数据为空，为将来预留且无副作用
+ *   5. 该项目群聊里「发过言的人」（data.chatMessages 中 projectId 命中者的 senderId）——
+ *      在项目群里说过话的人即事实上的参与者，必须能被找到（根治"有未读却无入口"）
+ *
  * @param {object} data
  * @param {string} projectId
  * @returns {string[]} 去重后的用户 id 数组
@@ -319,7 +329,59 @@ function projectMemberIds(data, projectId) {
             ids.add(String(t.assignee));
         }
     }
+    // 4. 显式成员字段（members / memberIds / team，任一为数组则并入；元素兼容 id 或 { id }）
+    for (const field of ['members', 'memberIds', 'team']) {
+        if (!Array.isArray(project[field])) continue;
+        for (const x of project[field]) {
+            if (x == null) continue;
+            const id = typeof x === 'object' ? (x.id != null ? x.id : null) : x;
+            if (id != null && id !== '') ids.add(String(id));
+        }
+    }
+    // 5. 项目群聊里发过言的人 = 事实上的项目参与者
+    for (const msg of (data.chatMessages || [])) {
+        if (msg.projectId === projectId && msg.senderId) ids.add(String(msg.senderId));
+    }
     return [...ids].filter(Boolean);
+}
+
+/**
+ * 取某项目下「与指定用户有过单聊往来」的对方 id 列表（去重，剔除自己）。
+ * 判定：chatDirectMessages 中 projectId 命中该项目，且 fromId/toId 之一为当前用户，
+ * 取另一方 id。用于前端在成员卡片列表里补齐"有往来但非项目成员"的入口。
+ * @param {object} data
+ * @param {string} userId
+ * @param {string} projectId
+ * @returns {string[]} 对方 id 数组
+ */
+function directPeersInProject(data, userId, projectId) {
+    const set = new Set();
+    for (const m of (data.chatDirectMessages || [])) {
+        const mProj = m.projectId == null ? null : String(m.projectId);
+        if (mProj !== String(projectId)) continue;
+        const fromMe = String(m.fromId) === String(userId);
+        const toMe = String(m.toId) === String(userId);
+        if (!fromMe && !toMe) continue;
+        const peer = fromMe ? m.toId : m.fromId;
+        if (peer && String(peer) !== String(userId)) set.add(String(peer));
+    }
+    return [...set];
+}
+
+/**
+ * 计算当前用户在某项目下的单聊未读总数（对所有往来 peer 求和）。
+ * 复用 countDirectUnread 的 (userId, peerId, projectId) 游标口径。
+ * @param {object} data
+ * @param {string} userId
+ * @param {string} projectId
+ * @returns {number}
+ */
+function directUnreadInProject(data, userId, projectId) {
+    let total = 0;
+    for (const peer of directPeersInProject(data, userId, projectId)) {
+        total += countDirectUnread(data, userId, peer, projectId);
+    }
+    return total;
 }
 
 /**
@@ -402,6 +464,9 @@ function lastMessageOf(data, projectId) {
 
 /**
  * GET /api/chat/conversations —— 当前用户可见项目群列表（含未读与最后一条消息）。
+ * 每项额外带两个 **per-viewer** 字段（依赖 userId，非全局）：
+ *   - dmPeers:      该项目下与当前用户有过单聊往来的对方 id 列表
+ *   - directUnread: 该项目下当前用户的单聊未读总数
  */
 function handleConversations(res, ctx, userId) {
     const data = ensureCollections(ctx.loadData());
@@ -422,6 +487,9 @@ function handleConversations(res, ctx, userId) {
             lastMessageAt: lastMessage ? lastMessage.createdAt : (p.updated_at || p.created_at || null),
             unreadCount: countUnread(data, userId, p.id),
             mentionCount: countMentionUnread(data, userId, p.id),
+            // per-viewer：单聊入口补齐（与当前用户有往来者，即使不是派生成员也能找到）
+            dmPeers: directPeersInProject(data, userId, p.id),
+            directUnread: directUnreadInProject(data, userId, p.id),
         };
     });
     // 按最后消息时间倒序（无消息的用 updated_at 回退，仍参与排序）
@@ -605,7 +673,12 @@ async function handleMarkRead(req, res, ctx, userId, projectId) {
 }
 
 /**
- * GET /api/chat/unread —— 未读汇总 { total, byProject, mentionByProject }。
+ * GET /api/chat/unread —— 未读汇总。
+ * 返回 { total, byProject, mentionByProject, directTotal, byPeer, byProjectDirect, orphanDirect }。
+ * 新增（V2 单聊入口闭环）：
+ *   - byProjectDirect: { [projectId]: number } 每个项目下的单聊未读聚合（由 byPeer 的 `peer#projectId` 键聚合）
+ *   - orphanDirect:    number projectId=null 桶（旧数据）的单聊未读总数
+ * 二者是 byPeer 的派生视图，**不重复计入 total**（total 仍 = projectTotal + directTotal）。
  */
 function handleUnread(res, ctx, userId) {
     const data = ensureCollections(ctx.loadData());
@@ -636,8 +709,28 @@ function handleUnread(res, ctx, userId) {
     }
     // 去重累计：byPeer 已按复合 key 去重，直接求和
     directTotal = Object.values(byPeer).reduce((a, b) => a + b, 0);
+    // 派生视图：按项目聚合单聊未读 + 无归属（projectId=null）桶未读（peerId 为 UUID，不含 '#'）
+    const byProjectDirect = {};
+    let orphanDirect = 0;
+    for (const [key, u] of Object.entries(byPeer)) {
+        const hashIdx = key.lastIndexOf('#');
+        const projPart = hashIdx >= 0 ? key.slice(hashIdx + 1) : '';
+        if (projPart) {
+            byProjectDirect[projPart] = (byProjectDirect[projPart] || 0) + u;
+        } else {
+            orphanDirect += u;
+        }
+    }
     const total = projectTotal + directTotal;
-    sendResponse(res, 200, { total, byProject, mentionByProject, directTotal, byPeer });
+    sendResponse(res, 200, {
+        total,
+        byProject,
+        mentionByProject,
+        directTotal,
+        byPeer,
+        byProjectDirect,
+        orphanDirect,
+    });
 }
 
 /**
