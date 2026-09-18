@@ -191,11 +191,19 @@ function directMessagesBetween(data, me, peerId, projectId = null) {
 
 /**
  * 计算某用户对某成员（在指定项目下）的单聊未读数：
- * 双方对话中「对方发送 + 未撤回 + 晚于已读游标 + 项目匹配」的消息数。
+ * 双方对话中「对方发送 + 未撤回 + 晚于已读游标 + 项目精确匹配」的消息数。
+ *
+ * 项目维度语义（**精确分桶**，与游标口径严格一致）：
+ *   - projectId == null  → 只统计「无项目桶」（m.projectId == null）的消息；
+ *   - projectId != null  → 只统计该项目下的消息。
+ * 注意：此处 null **不是**"不限定项目"的通配。历史上 message 侧写成通配
+ * （`projectId == null || ...`），而游标侧按 null 桶精确匹配，导致带项目归属的未读
+ * 同时落入 null 桶与其项目桶 → 重复计数（缺陷 D1）。此处统一为精确分桶。
+ *
  * @param {object} data
  * @param {string} userId
  * @param {string} peerId
- * @param {string|null} projectId null=不限定项目（兜底全量），否则仅该项目
+ * @param {string|null} projectId null=仅无项目桶；否则仅该项目
  * @returns {number}
  */
 function countDirectUnread(data, userId, peerId, projectId = null) {
@@ -212,7 +220,7 @@ function countDirectUnread(data, userId, peerId, projectId = null) {
             String(m.fromId) === String(peerId) &&
             String(m.toId) === String(userId) &&
             !m.recalled &&
-            (projectId == null || String(m.projectId || null) === String(projectId)) &&
+            (projectId == null ? m.projectId == null : String(m.projectId || null) === String(projectId)) &&
             new Date(m.createdAt).getTime() > since
     ).length;
 }
