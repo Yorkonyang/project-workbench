@@ -242,7 +242,8 @@ export default function ChatWindow({ mode = 'project', projectId, peerId, peerPr
     try {
       if (isDirect) {
         // 单聊发送带项目维度（在哪个项目下）
-        await sendMessage(peerId, content, null, replyTo, peerProjectId);
+        // 注意：direct 模式下 sendMessage 即 sendDirect，签名 (peerId, content, replyTo, projectId)
+        await sendMessage(peerId, content, replyTo, peerProjectId);
       } else {
         // 仅保留仍存在的成员 id
         const validIds = new Set(chatMembers.map((m) => m.id));

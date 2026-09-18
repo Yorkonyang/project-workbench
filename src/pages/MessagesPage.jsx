@@ -65,20 +65,32 @@ export default function MessagesPage() {
     fetchDirectConversations();
   }, [fetchConversations, fetchUnread, fetchDirectConversations]);
 
-  // URL 参数定位会话（?peer= 单聊必带 ?project= 项目维度；?project= 定位群聊）
+  // URL 参数定位会话（?peer= 单聊优先带 ?project= 项目维度；?project= 定位群聊）
+  // 兼容：升级前的旧通知链接只有 ?peer=xxx，此时从已加载的单聊会话回填该项目维度，
+  // 否则单聊发送会因缺少 projectId 被后端拒绝（400「缺少 projectId」）。
   useEffect(() => {
     const pid = searchParams.get('project');
     const peer = searchParams.get('peer');
     if (peer) {
-      // peer 打开：项目维度取自 URL project 参数（无则 null 全量桶）
-      const openPeerKey = peerKey(peer, pid);
-      const activeKey = peerKey(activePeerId, activePeerProjectId);
-      if (openPeerKey !== activeKey) openPeer(peer, pid);
+      const isSamePeer = String(activePeerId || '') === String(peer);
+      // 已打开同一会话 → 不重复打开
+      if (isSamePeer && peerKey(peer, pid) === peerKey(activePeerId, activePeerProjectId)) return;
+      // 同一 peer 且 URL 未指定项目：保持当前维度，避免会话列表刷新导致跳项目
+      if (isSamePeer && !pid) return;
+
+      let resolved = pid;
+      if (!resolved) {
+        const cand = (directConversations || [])
+          .filter((c) => String(c.peerId) === String(peer) && c.projectId)
+          .sort((a, b) => new Date(b.lastMessageAt || 0) - new Date(a.lastMessageAt || 0));
+        resolved = cand.length ? cand[0].projectId : null;
+      }
+      openPeer(peer, resolved);
     } else if (pid && pid !== activeProjectId) {
       openProject(pid);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [searchParams, directConversations]);
 
   // 单聊未读快照：`${peerId}#${projectId}` -> unreadCount（复合 key，合并会话列表与 byPeer）
   const directUnreadMap = useMemo(() => {
