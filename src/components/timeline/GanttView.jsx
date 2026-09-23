@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { isMilestoneDone } from '@/config/theme';
 import { getLevel, getAncestors } from '@/lib/hierarchy';
 import { PROJECT_THEMES, getLevelShade, getTaskAltBg } from '@/lib/projectTheme';
+import { isOffDay, getDayType, OFF_DAY_BG, withAlpha } from '@/lib/holidays';
 
 // 标题文字色：MAX_DEPTH=4 后共 5 档色阶（L0~L4）。
 // L0~L2 底色较深用白字；L3/L4 底色偏浅用黑字（与之前"第三/四级黑字"一致，现在 L3/L4 正好对应第三/四级）。
@@ -266,6 +267,13 @@ export default function GanttView({ tasks, milestones, projects }) {
             <span className="w-10 h-2.5 bg-slate-500 rounded"></span>
             <span className="text-slate-500">已废止</span>
           </div>
+          <div className="flex items-center gap-1.5">
+            <span
+              className="w-3.5 h-3.5 rounded-sm border border-slate-200"
+              style={{ backgroundColor: OFF_DAY_BG }}
+            ></span>
+            <span className="text-slate-500">周末/法定节假日</span>
+          </div>
         </div>
       </div>
 
@@ -294,18 +302,31 @@ export default function GanttView({ tasks, milestones, projects }) {
           <div className="flex border-b border-slate-50">
             <div className="shrink-0 bg-slate-50 border-r border-slate-100 sticky left-0 z-10" style={{ width: LABEL_W }}></div>
             <div className="flex-1 flex overflow-hidden">
-              {days.map((day, i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    'flex items-center justify-center text-[10px] text-slate-400 border-r border-slate-50',
-                    day.isToday && 'bg-primary-50 text-primary-600 font-medium'
-                  )}
-                  style={{ width: dayWidth }}
-                >
-                  {format(day.date, 'd')}
-                </div>
-              ))}
+              {days.map((day, i) => {
+                const dayType = getDayType(day.date);
+                const off = dayType === 'weekend' || dayType === 'holiday';
+                return (
+                  <div
+                    key={i}
+                    className={cn(
+                      'flex flex-col items-center justify-center text-[10px] text-slate-400 border-r border-slate-50',
+                      day.isToday && 'bg-primary-50 text-primary-600 font-medium'
+                    )}
+                    style={{
+                      width: dayWidth,
+                      backgroundColor: !day.isToday && off ? OFF_DAY_BG : undefined,
+                    }}
+                  >
+                    <span>{format(day.date, 'd')}</span>
+                    {!day.isToday && dayType === 'makeup' && (
+                      <span className="text-[8px] leading-none text-amber-600 font-medium">班</span>
+                    )}
+                    {!day.isToday && off && (
+                      <span className="text-[8px] leading-none text-slate-400 font-medium">休</span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -339,20 +360,39 @@ export default function GanttView({ tasks, milestones, projects }) {
                       <span>{curProject?.name || projectId}</span>
                     </p>
                   </div>
-                  <div className="flex-1 relative" style={{ width: totalWidth, height: summaryRowHeight, backgroundColor: rowBg }}>
-                    {/* Grid Lines */}
+                  <div className="flex-1 relative" style={{ width: totalWidth, height: summaryRowHeight }}>
+                    {/* 最底层：周末/节假日淡灰底（置于项目色带之下，不遮挡标题栏） */}
                     <div className="absolute inset-0 flex">
                       {days.map((day, i) => (
                         <div
                           key={i}
-                          className={cn(
-                            'border-r h-full',
-                            theme.accent,
-                            day.isToday && 'bg-red-50'
-                          )}
-                          style={{ width: dayWidth }}
+                          className="border-r h-full"
+                          style={{
+                            width: dayWidth,
+                            backgroundColor: !day.isToday && isOffDay(day.date) ? OFF_DAY_BG : undefined,
+                          }}
                         />
                       ))}
+                    </div>
+                    {/* 项目色带层：置于灰底之上，始终不被遮挡；周末以半透明让灰底透出 */}
+                    <div className="absolute inset-0 flex">
+                      {days.map((day, i) => {
+                        const off = !day.isToday && isOffDay(day.date);
+                        return (
+                          <div
+                            key={i}
+                            className={cn('border-r h-full', theme.accent)}
+                            style={{
+                              width: dayWidth,
+                              backgroundColor: day.isToday
+                                ? '#fef2f2'
+                                : off
+                                  ? withAlpha(rowBg, 0.55)
+                                  : rowBg,
+                            }}
+                          />
+                        );
+                      })}
                     </div>
 
                     {/* Today Line - Full Height */}
@@ -422,19 +462,38 @@ export default function GanttView({ tasks, milestones, projects }) {
 
                       {/* Gantt Area */}
                       <div className="flex-1 relative" style={{ width: totalWidth }}>
-                        {/* Grid Lines */}
+                        {/* 最底层：周末/节假日淡灰底（置于行底色之下，不遮挡内容） */}
                         <div className="absolute inset-0 flex">
                           {days.map((day, i) => (
                             <div
                               key={i}
-                              className={cn(
-                                'border-r h-full',
-                                theme.accent,
-                                day.isToday && 'bg-red-50'
-                              )}
-                              style={{ width: dayWidth }}
+                              className="border-r h-full"
+                              style={{
+                                width: dayWidth,
+                                backgroundColor: !day.isToday && isOffDay(day.date) ? OFF_DAY_BG : undefined,
+                              }}
                             />
                           ))}
+                        </div>
+                        {/* 行底色层：置于灰底之上；周末半透明让灰底透出，工作日实心不遮挡 */}
+                        <div className="absolute inset-0 flex">
+                          {days.map((day, i) => {
+                            const off = !day.isToday && isOffDay(day.date);
+                            return (
+                              <div
+                                key={i}
+                                className={cn('border-r h-full', theme.accent)}
+                                style={{
+                                  width: dayWidth,
+                                  backgroundColor: day.isToday
+                                    ? '#fef2f2'
+                                    : off
+                                      ? withAlpha(taskRowBg, 0.55)
+                                      : taskRowBg,
+                                }}
+                              />
+                            );
+                          })}
                         </div>
 
                         {/* Today Line */}
