@@ -28,11 +28,12 @@
  *  BPM（轻流）隔离约束（需求 1，2026-09-24 修订）
  * ----------------------------------------------------------------------------
  *  本模块（chat.js）仍**严禁 require 或直接调用 qingflow 模块**——保持零 qingflow 依赖。
- *  2026-09-24 用户新需求：群聊消息需经轻流触达企微，且链接直达项目群聊页
- *  （/messages?project=<id>，区别于任务推送的 /task/:id）。实现方式：
- *  simple-server.js 在构造 ctx 时注入 onGroupMessage 钩子（内部桥接 qingflow），
- *  本模块仅在群聊消息落库后调用 ctx.onGroupMessage(...)，不感知推送实现。
- *  单聊仍不推送、不产生任何 BPM 副作用；单聊通知 type='chat_direct' 不在桥接范围。
+ *  2026-09-24 用户需求：群聊 + 单聊消息均经轻流触达企微，但链接相互区分：
+ *    - 群聊：推送给所有项目成员，链接直达项目群聊页（/messages?project=<id>）；
+ *    - 单聊：仅推送给接收方，链接直达接收方在该项目下的单聊界面
+ *            （/messages?peer=<receiverId>&project=<id>），接收方可直接回复。
+ *  实现方式：simple-server.js 在构造 ctx 时注入 onGroupMessage / onDirectMessage 钩子
+ *  （内部桥接 qingflow），本模块仅在消息落库后调用对应钩子，不感知推送实现。
  * ============================================================================
  */
 
@@ -1174,10 +1175,10 @@ function handleGetDirectMessages(res, ctx, userId, peerId, url) {
  * 校验：body 必填 projectId；项目必须存在（非法 → 400）；canChat 当前用户对该项目有访问权（→ 403）；
  *      peer 必须 ∈ 该项目成员集合（复用群聊那套 canChat + projectMemberIds，否则 → 403）。
  * 副作用：站内通知（chat_direct，含 5 分钟聚合）+ SSE 'dmessage'（完整 message 自动带 projectId）。
- * 严禁调用 qingflow / BPM。
+ * 单聊消息经 simple-server 注入的 onDirectMessage 钩子桥接轻流/企微（本模块零 qingflow 依赖）。
  */
 async function handlePostDirectMessage(req, res, ctx, userId, peerId) {
-    // BPM 隔离：本函数只产生站内通知，绝不调用 qingflow。
+    // BPM 隔离：本函数零 qingflow 依赖；单聊推送经注入的 onDirectMessage 钩子触发（不阻塞响应）。
     const data = ensureCollections(ctx.loadData());
     const { sendResponse, parseBody, generateId, saveData, ac } = ctx;
 
@@ -1283,6 +1284,26 @@ async function handlePostDirectMessage(req, res, ctx, userId, peerId) {
 
     // SSE 推送：仅发给接收方，发送者本人不收自己的 dmessage
     broadcast([toId], 'dmessage', message);
+
+    // BPM（轻流）推送：经 simple-server 注入的钩子桥接（本模块零 qingflow 依赖）。
+    // 单聊消息 → 轻流/企微，仅推接收方，链接直达接收方在该项目下的单聊界面（区别于群聊推送）。
+    if (typeof ctx.onDirectMessage === 'function') {
+        try {
+            const r = ctx.onDirectMessage({
+                projectId,
+                projectName: project.name || '项目',
+                senderName,
+                snippet: previewText,
+                mentionIds: [],
+                receiverId: toId,
+            });
+            if (r && typeof r.catch === 'function') {
+                r.catch((e) => console.error('[单聊BPM推送] 失败(不影响消息发送):', e.message));
+            }
+        } catch (e) {
+            console.error('[单聊BPM推送] 钩子执行异常(不影响消息发送):', e.message);
+        }
+    }
 
     sendResponse(res, 200, message);
 }

@@ -774,6 +774,46 @@ async function notifyChatMessage(info) {
     return await sendToQSource(payload, pushConfig.chatQsourceId || undefined);
 }
 
+// ===== 项目单聊消息推送（2026-09-24 新增，用户需求补充） =====
+// 单聊消息经轻流触达企微：仅推送给「接收方」，链接直达接收方在该项目下的单聊界面
+// （/messages?peer=<receiverId>&project=<projectId>），接收方点击后可直接回复。
+// 与群聊推送的区别：群聊推给所有成员、链接指向群聊页；单聊只推接收方、链接指向其单聊界面。
+async function notifyDirectMessage(info) {
+    const { projectId, projectName, senderName, snippet, mentionIds = [], receiverId } = info || {};
+    if (!projectId || !receiverId) return { success: false, error: '缺少 projectId/receiverId' };
+
+    const receiver = db.getMemberById(receiverId);
+    if (!receiver || !receiver.email) {
+        console.log('[轻流推送] 单聊消息接收方无有效邮箱，跳过推送');
+        return { success: false, error: '接收方无有效邮箱' };
+    }
+    const receiverEmail = receiver.email;
+
+    // 摘要中的 @<userId> 替换为 @<姓名>
+    let text = snippet || '';
+    for (const id of mentionIds) {
+        const m = db.getMemberById(id);
+        if (m?.name) text = text.split(id).join(m.name);
+    }
+
+    const linkPath = `/messages?peer=${encodeURIComponent(receiverId)}&project=${encodeURIComponent(projectId)}`;
+    const payload = {
+        bt: `[项目私信] ${projectName || '项目'}`,   // 标题（前缀用于与群聊/任务推送区分）
+        ms: `${senderName || '成员'}：${text}`,     // 描述：发送者 + 消息摘要
+        zrr: receiverEmail,                          // 责任人（仅接收方一人）
+        yxj: '中优先级',
+        jzrq: new Date().toISOString().split('T')[0],
+        ssxm: projectName || '项目工作台',
+        zht: '未读',
+        // 直达链接：仅接收方（签给接收方邮箱）可免登直达其在项目下的单聊界面，可直接回复
+        taskUrl: buildFrontendUrl(linkPath, receiverEmail, { type: 'project_direct', id: projectId, peer: receiverId }),
+    };
+
+    console.log('[轻流推送] 单聊消息通知:', payload);
+    // 单聊与群聊共用 chatQsourceId（若配置），否则回退共用任务 Q-Source
+    return await sendToQSource(payload, pushConfig.chatQsourceId || undefined);
+}
+
 async function sendToQSource(payload, qsourceIdOverride) {
     const { baseUrl } = pushConfig;
     const qsourceId = qsourceIdOverride || pushConfig.qsourceId;
@@ -839,6 +879,7 @@ module.exports = {
     notifyTodoCreated,
     notifyOverdue,
     notifyChatMessage,
+    notifyDirectMessage,
     notifyProjectMerged,
     notifyProjectArchived,
     addFormData,

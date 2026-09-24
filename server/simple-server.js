@@ -2414,6 +2414,17 @@ const server = http.createServer(async (req, res) => {
                     })
                     .catch((e) => console.error('[群聊BPM推送] 失败(不影响消息发送):', e.message));
             },
+            // 单聊消息 → 轻流/企微推送（2026-09-24 需求补充）：仅推接收方，链接直达其单聊界面
+            // （/messages?peer=<receiverId>&project=<id>），区别于群聊推送。
+            onDirectMessage: (info) => {
+                qingflow.notifyDirectMessage(info)
+                    .then((r) => {
+                        if (r && r.success === false) {
+                            console.warn('[单聊BPM推送] 未成功:', r.error || r.errMsg || r.errCode || '');
+                        }
+                    })
+                    .catch((e) => console.error('[单聊BPM推送] 失败(不影响消息发送):', e.message));
+            },
         });
         if (handled) return;
     }
