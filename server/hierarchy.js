@@ -109,7 +109,7 @@ function maxSubtreeDepth(projects, rootId) {
   return max;
 }
 
-/** 层级编号生成器：子项目编号 = 父编号 + '.' + 同级序号（单数字，如 XM_001 → XM_001.1） */
+/** 层级编号生成器：子项目编号 = 父编号 + '.' + 同级序号（单数字，父码前缀无关，如 YYG_001 → YYG_001.1） */
 function formatHierarchyCode(parentCode, seq) {
   const n = String(seq);
   if (!parentCode) return n;

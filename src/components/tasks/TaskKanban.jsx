@@ -88,7 +88,7 @@ export default function TaskKanban({ tasks, onTaskClick, projectFilter, onEdit, 
                 ref={provided.innerRef}
                 {...provided.droppableProps}
                 className={cn(
-                  'w-72 shrink-0 bg-slate-50 rounded-lg p-3 transition-colors',
+                  'w-60 sm:w-72 shrink-0 bg-slate-50 rounded-lg p-3 transition-colors',
                   snapshot.isDraggingOver && 'bg-slate-100'
                 )}
               >

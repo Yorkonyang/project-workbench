@@ -117,7 +117,7 @@ export function maxSubtreeDepth(projects, rootId) {
   return max;
 }
 
-/** 层级编号生成器：子项目编号 = 父编号 + '.' + 同级序号（单数字，如 XM_001 → XM_001.1；XM_001.1 → XM_001.1.1） */
+/** 层级编号生成器：子项目编号 = 父编号 + '.' + 同级序号（单数字，父编号任意，新前缀如 YYG_001、历史 XM_001 均兼容） */
 export function formatHierarchyCode(parentCode, seq) {
   const n = String(seq);
   if (!parentCode) return n;

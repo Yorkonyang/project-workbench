@@ -131,7 +131,7 @@ export default function DocumentsPage() {
             { value: '', label: '全部项目' },
             ...activeProjects.map((p) => ({ value: p.id, label: p.name })),
           ]}
-          className="w-36"
+          className="w-full sm:w-36"
         />
         <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
           <input
@@ -150,7 +150,7 @@ export default function DocumentsPage() {
             { value: '', label: '全部项目阶段' },
             ...categories.map((c) => ({ value: c, label: c })),
           ]}
-          className="w-32"
+          className="w-full sm:w-32"
         />
       </div>
 

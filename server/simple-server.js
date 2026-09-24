@@ -12,6 +12,8 @@ const ac = require('./accessControl');
 const sso = require('./auth');
 const hierarchy = require('./hierarchy');
 const chat = require('./chat');
+// T02：项目编号前缀固化（服务端独占写；CJS 镜像见 server/projectCodePrefix.js）
+const { assignMissingPrefixes, memberInitials } = require('./projectCodePrefix');
 
 const PORT = process.env.PORT || 3000;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../data/workbench.db');
@@ -110,6 +112,25 @@ function loadData() {
 function saveData(data) {
     fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 }
+
+// T02 启动回填：为存量成员补齐 codePrefix（幂等，二次启动 0 变更不写盘）
+function backfillMemberPrefixes() {
+    const data = loadData();
+    if (!data.members || !Array.isArray(data.members)) return;
+    const departments = Array.isArray(data.departments) ? data.departments : [];
+    const { changed, assigned } = assignMissingPrefixes(
+        data.members,
+        departments,
+        (m) => memberInitials(m.name, m.email)
+    );
+    if (changed) {
+        saveData(data);
+        console.log(`[codePrefix] 已为 ${assigned} 名存量成员补齐前缀`);
+    } else {
+        console.log('[codePrefix] 无需回填（存量成员前缀已齐）');
+    }
+}
+backfillMemberPrefixes();
 
 // 生成唯一ID
 function generateId() {
@@ -1415,6 +1436,12 @@ const server = http.createServer(async (req, res) => {
         try {
             const result = await qingflow.syncOrganization(data);
             if (result.success) {
+                // T02：前缀固化——轻流同步新成员入册后统一补前缀（qingflow.js 内 push，handler 收口）
+                assignMissingPrefixes(
+                    data.members,
+                    data.departments || [],
+                    (m) => memberInitials(m.name, m.email)
+                );
                 saveData(data);
                 sendResponse(res, 200, { success: true, message: '同步完成', ...result.results });
             } else {
@@ -1572,7 +1599,12 @@ const server = http.createServer(async (req, res) => {
                 }
             }
         }
-
+        // T02：前缀固化——Excel 导入新增/改名成员后统一补前缀（导入体顺序即创建顺序）
+        assignMissingPrefixes(
+            data.members,
+            data.departments,
+            (m) => memberInitials(m.name, m.email)
+        );
         saveData(data);
         sendResponse(res, 200, { success: true, message: 'Excel 导入完成', ...results });
         return;
@@ -1831,6 +1863,12 @@ const server = http.createServer(async (req, res) => {
             updated_at: new Date().toISOString()
         };
         data.members.push(member);
+        // T02：前缀固化——新成员入册即分配 codePrefix（服务端独占写，先分配后落盘）
+        assignMissingPrefixes(
+            data.members,
+            data.departments || [],
+            (m) => memberInitials(m.name, m.email)
+        );
         saveData(data);
         sendResponse(res, 201, member);
         return;
@@ -1840,6 +1878,8 @@ const server = http.createServer(async (req, res) => {
     if (pathname.match(/^\/api\/members\/[\w-]+$/) && method === 'PUT') {
         const id = pathname.split('/').pop();
         const body = await parseBody(req);
+        // T02：前缀固化——codePrefix 服务端独占写，客户端 PUT 体中的该字段一律丢弃
+        delete body.codePrefix;
         const data = loadData();
         const index = data.members.findIndex(m => m.id === id);
         if (index !== -1) {

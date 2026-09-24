@@ -1,4 +1,4 @@
-import { useMemo, Fragment, useRef, useEffect } from 'react';
+import { useMemo, Fragment, useRef, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format, addDays, isSameDay, parseISO, startOfMonth, endOfMonth } from 'date-fns';
 import { Flag, Star } from 'lucide-react';
@@ -7,6 +7,7 @@ import { isMilestoneDone } from '@/config/theme';
 import { getLevel, getAncestors } from '@/lib/hierarchy';
 import { PROJECT_THEMES, getLevelShade, getTaskAltBg } from '@/lib/projectTheme';
 import { isOffDay, getDayType, OFF_DAY_BG, withAlpha } from '@/lib/holidays';
+import useMediaQuery from '@/hooks/useMediaQuery';
 
 // 标题文字色：MAX_DEPTH=4 后共 5 档色阶（L0~L4）。
 // L0~L2 底色较深用白字；L3/L4 底色偏浅用黑字（与之前"第三/四级黑字"一致，现在 L3/L4 正好对应第三/四级）。
@@ -16,6 +17,8 @@ function textColorForLevel(level) {
 
 export default function GanttView({ tasks, milestones, projects }) {
   const navigate = useNavigate();
+  const isMobile = useMediaQuery('(max-width: 767px)');
+  const [legendOpen, setLegendOpen] = useState(false);
   // Merge tasks and milestones with unified date fields
   // Filter out tasks from archived projects
   const activeProjectIds = new Set(
@@ -45,8 +48,11 @@ export default function GanttView({ tasks, milestones, projects }) {
       ...filteredMilestones.map((m) => m.title || ''),
     ];
     const maxLen = names.reduce((m, s) => Math.max(m, String(s).length), 0);
-    return Math.min(480, Math.max(192, 32 + maxLen * 11)); // 11px/字符(text-sm) + 32px padding
-  }, [projects, filteredTasks, filteredMilestones]);
+    // 移动端压缩到 96-160px；桌面端保持原公式（11px/字符(text-sm) + 32px padding）
+    return isMobile
+      ? Math.min(160, Math.max(96, 24 + maxLen * 8))
+      : Math.min(480, Math.max(192, 32 + maxLen * 11));
+  }, [projects, filteredTasks, filteredMilestones, isMobile]);
 
   if (allItems.length === 0) {
     return (
@@ -93,7 +99,7 @@ export default function GanttView({ tasks, milestones, projects }) {
 
   const totalDays = Math.ceil((chartEndDate - chartStartDate) / (1000 * 60 * 60 * 24));
   
-  const dayWidth = 45; // Fixed width for month view
+  const dayWidth = isMobile ? 32 : 45; // 固定宽度月视图；移动端压缩为 32px
   const totalWidth = totalDays * dayWidth;
   const rowHeight = 64; // Height for individual task rows
   const summaryRowHeight = 40; // Height for summary row
@@ -234,7 +240,18 @@ export default function GanttView({ tasks, milestones, projects }) {
       {/* Header */}
       <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
         <h3 className="font-semibold text-slate-800 text-sm">项目甘特图</h3>
-        <div className="flex items-center gap-3 text-xs flex-wrap">
+        <button
+          onClick={() => setLegendOpen((v) => !v)}
+          className="md:hidden shrink-0 text-xs font-medium text-slate-500"
+        >
+          图例 {legendOpen ? '−' : '+'}
+        </button>
+        <div
+          className={cn(
+            'items-center gap-3 text-xs flex-wrap',
+            isMobile ? (legendOpen ? 'flex' : 'hidden') : 'flex'
+          )}
+        >
           <div className="flex items-center gap-1.5">
             <span className="w-10 h-2.5 bg-blue-400 rounded"></span>
             <span className="text-slate-500">计划时间</span>
@@ -453,7 +470,7 @@ export default function GanttView({ tasks, milestones, projects }) {
                             )}
                             <span className="truncate">{item.title}</span>
                           </p>
-                          <p className="text-[10px] text-slate-400 font-mono">
+                          <p className="hidden md:block text-[10px] text-slate-400 font-mono">
                             {item.startDate}
                             {item.dueDate && item.startDate !== item.dueDate && ` → ${item.dueDate}`}
                           </p>

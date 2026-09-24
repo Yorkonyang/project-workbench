@@ -168,7 +168,7 @@ export default function TasksPage() {
             value={projectFilter}
             onChange={setProjectFilter}
             options={projectOptions}
-            className="w-72"
+            className="w-full sm:w-72"
           />
           <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
             <input
@@ -184,13 +184,13 @@ export default function TasksPage() {
             value={statusFilter}
             onChange={setStatusFilter}
             options={STATUS_OPTIONS}
-            className="w-32"
+            className="w-full sm:w-32"
           />
           <Select
             value={priorityFilter}
             onChange={setPriorityFilter}
             options={PRIORITY_OPTIONS}
-            className="w-28"
+            className="w-full sm:w-28"
           />
         </div>
         <div className="flex-1 min-w-[200px]">

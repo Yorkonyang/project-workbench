@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, Fragment } from 'react';
 import { Plus, Edit2, Trash2 } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import Select from '@/components/ui/Select';
@@ -13,10 +13,13 @@ import { useProjectStore } from '@/store/useProjectStore';
 import { useAccess } from '@/hooks/useAccess';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getDescendants } from '@/lib/hierarchy';
+import { cn } from '@/lib/utils';
+import useMediaQuery from '@/hooks/useMediaQuery';
 
 export default function TimelinePage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const isMobile = useMediaQuery('(max-width: 767px)');
   const tasks = useTaskStore((s) => s.tasks);
   const milestones = useMilestoneStore((s) => s.milestones);
   const addMilestone = useMilestoneStore((s) => s.addMilestone);
@@ -39,6 +42,8 @@ export default function TimelinePage() {
 
   // 如果来自 URL，锁定选择器
   const isLocked = !!projectIdFromUrl;
+  // 锁定项目（移动端锁定条显示其 code/name；项目来自 URL，可能不在可见列表，find 兜底）
+  const lockedProject = projects.find((p) => p.id === projectIdFromUrl);
 
   const [showForm, setShowForm] = useState(false);
   const [editingMilestone, setEditingMilestone] = useState(null);
@@ -131,9 +136,20 @@ export default function TimelinePage() {
     setEditingMilestone(null);
   };
 
+  // 解锁：移除 projectId 并保留其余 query；setSearchParams 使 React Router 即时重算，
+  // 解锁后 isLocked 立刻为 false（移动端 chip 不再锁定、锁定条消失），不跳路由、不丢其它筛选
+  const handleUnlock = () => {
+    const p = new URLSearchParams(searchParams);
+    p.delete('projectId');
+    setSearchParams(p, { replace: true });
+    setProjectFilter('');
+    setIncludeSub(false);
+  };
+
   return (
     <PageContainer>
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+      {/* 桌面筛选行（≥768px）：与改造前像素级一致；<768px 隐藏 */}
+      <div className="hidden md:flex items-center justify-between mb-4 flex-wrap gap-2">
         <div className="flex items-center gap-2 flex-wrap">
           <Select
             value={projectFilter}
@@ -164,6 +180,79 @@ export default function TimelinePage() {
           </Button>
         )}
       </div>
+
+      {/* 移动端筛选区（<768px）：chip 条替代桌面 Select/checkbox；isMobile 门控 + md:hidden 双保险，桌面不渲染 */}
+      {isMobile && (
+      <div className="md:hidden space-y-2.5 mb-4">
+        {/* 锁定条：仅 isLocked 时显示，给出 code/name 与解锁入口 */}
+        {isLocked && (
+          <div className="flex items-center justify-between gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+            <span className="truncate">
+              已锁定：{lockedProject ? `${lockedProject.code || ''} ${lockedProject.name || ''}`.trim() : projectIdFromUrl}
+            </span>
+            <button
+              type="button"
+              onClick={handleUnlock}
+              className="shrink-0 font-medium text-amber-700 underline underline-offset-2 hover:text-amber-900 transition-smooth"
+            >
+              解锁
+            </button>
+          </div>
+        )}
+        {/* 横向项目 chip 条 + 选中项目后的「含子项目」pill，与桌面 Select 共享 projectFilter/includeSub */}
+        <div className="overflow-x-auto -mx-1 px-1 py-1">
+          <div className="flex items-center gap-2">
+            {projectOptions.map((opt) => {
+              const selected = projectFilter === opt.value;
+              // 锁定态：仅锁定项目 chip 可点，其余 pointer-events-none 灰化
+              const chipDisabled = isLocked && opt.value !== projectIdFromUrl;
+              return (
+                <Fragment key={opt.value || '__all'}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProjectFilter(opt.value);
+                      setIncludeSub(false);
+                    }}
+                    className={cn(
+                      'shrink-0 rounded-full px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-smooth',
+                      selected
+                        ? 'bg-primary-500 text-white shadow-sm'
+                        : 'bg-slate-100 text-slate-600 border border-slate-200',
+                      chipDisabled && 'pointer-events-none opacity-40'
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                  {/* 仅「选中某项目（非全部）」后，在该 chip 后方追加含子项目 pill */}
+                  {opt.value !== '' && selected && (
+                    <button
+                      type="button"
+                      onClick={() => setIncludeSub(!includeSub)}
+                      className={cn(
+                        'shrink-0 rounded-full px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-smooth',
+                        includeSub
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-white text-emerald-600 border border-emerald-300'
+                      )}
+                    >
+                      含子项目
+                    </button>
+                  )}
+                </Fragment>
+              );
+            })}
+          </div>
+        </div>
+        {/* 新建里程碑：移动端全宽独立行（桌面行内保持原样） */}
+        {canCreateMilestone && (
+          <Button size="sm" className="w-full md:w-auto" onClick={() => { setEditingMilestone(null); setShowForm(true); }}>
+            <Plus className="w-4 h-4" />
+            新建里程碑
+          </Button>
+        )}
+      </div>
+      )}
 
       <div className="mb-4">
         <GanttView

@@ -130,7 +130,7 @@ export default function Header({ onMenuClick }) {
           {showNotif && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setShowNotif(false)} />
-              <div className="absolute right-0 top-full mt-2 w-96 bg-white rounded-xl shadow-lg border border-slate-200 z-50 max-h-[480px] flex flex-col">
+              <div className="absolute right-0 top-full mt-2 w-96 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-lg border border-slate-200 z-50 max-h-[480px] flex flex-col">
                 <div className="p-3 border-b border-slate-100 flex items-center justify-between">
                   <h3 className="font-semibold text-slate-800">
                     待办提醒
@@ -234,7 +234,7 @@ export default function Header({ onMenuClick }) {
           {showUserMenu && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
-              <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-lg border border-slate-200 z-50">
+              <div className="absolute right-0 top-full mt-2 w-64 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-lg border border-slate-200 z-50">
                 {/* 当前用户信息 */}
                 <div className="p-3 border-b border-slate-100">
                   <div className="flex items-center gap-2.5">

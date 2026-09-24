@@ -78,6 +78,12 @@ node scripts/migrate.js
 | PORT | 服务端口 | 3000 |
 | DB_PATH | 数据库路径 | ./data/workbench.db |
 
+## 成员 codePrefix（项目编号前缀）
+
+- 启动回填机制：服务启动时在 DB 初始化后调用 `backfillMemberPrefixes()`，对存量成员批量补齐 `codePrefix`（`assignMissingPrefixes`，组织结构顺序 + 拼音首字母，同名加 1/2/… 数字后缀）；仅在有变更时 `saveData` 落盘，二次启动「无需回填」（幂等，不写盘）。手动创建 / Excel 导入 / 轻流同步三条写路径均在 `saveData` 前收口同一函数。
+- `codePrefix` 固化语义：服务端独占写；`PUT /api/members/:id` 请求体中的 `codePrefix` 一律丢弃（`delete body.codePrefix`）；成员改名/换部门后前缀**不重算**（固化原则）。
+- `pinyin-pro` 依赖：`server/projectCodePrefix.js`（CJS）顶层 `require('pinyin-pro')`，可从 `server/node_modules` 或根 `node_modules` 解析；开发回归脚本 `node server/scripts/verify-prefixes.js` 校验 CJS/ESM 双端分配结果一致。
+
 ## 技术栈
 
 - **运行时**: Node.js 22+

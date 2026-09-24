@@ -5,6 +5,8 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { apiClient } from '@/lib/apiClient';
 import * as hierarchy from '@/lib/hierarchy';
+import * as pc from '@/lib/projectCodePrefix';
+import { useAuthStore } from '@/store/useAuthStore';
 import { useTaskStore } from '@/store/useTaskStore';
 import { useTodoStore } from '@/store/useTodoStore';
 import { useDocumentStore } from '@/store/useDocumentStore';
@@ -37,10 +39,10 @@ export const useProjectStore = create(
       },
 
       // 生成项目编号：
-      //  - 根项目：全局顺序 XM_001 / XM_002 ...
-      //  - 子项目：父编号 + '.' + 同级序号（单数字），如 XM_001 → XM_001.1、XM_001.1 → XM_001.1.1
+      //  - 根项目：登录人 codePrefix + '_' + 三位流水号（各前缀独立 001 起，>999 自动进位）；
+      //    codePrefix 缺失时用 memberInitials 现算兜底，无身份则占位 'U'
+      //  - 子项目：父编号 + '.' + 同级序号（单数字），如 YYG_001 → YYG_001.1、YYG_001.1 → YYG_001.1.1
       generateProjectCode: (parentProjectId = '') => {
-        const prefix = 'XM_';
         const existing = get().projects || [];
         const normalizedParent = hierarchy.normalizeParent(parentProjectId);
         if (normalizedParent) {
@@ -56,15 +58,10 @@ export const useProjectStore = create(
           }, 0);
           return hierarchy.formatHierarchyCode(parentCode, maxSeq + 1);
         }
-        const maxNum = existing.reduce((max, p) => {
-          const m = (p.code || '').match(/^XM_(\d+)$/);
-          if (m) {
-            const n = parseInt(m[1], 10);
-            return n > max ? n : max;
-          }
-          return max;
-        }, 0);
-        return prefix + String(maxNum + 1).padStart(3, '0');
+        const member = useAuthStore.getState().currentUser();
+        const prefix = member?.codePrefix
+          || (member ? pc.memberInitials(member.name, member.email) : 'U');
+        return pc.pickNextRootCode(existing, prefix);
       },
 
       updateProject: async (id, data) => {

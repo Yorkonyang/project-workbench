@@ -195,7 +195,7 @@ export default function MembersPage() {
       {/* ===== 成员管理 Tab ===== */}
       {activeTab === 'members' && (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6 stagger-children">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mb-6 stagger-children">
             <StatCard icon={Users} label="成员总数" value={stats.total} color="#6366F1" />
             <StatCard icon={Shield} label="管理员" value={stats.admin} color="#DC2626" />
             <StatCard icon={UserCircle} label="项目经理" value={stats.pm} color="#8B5CF6" />
