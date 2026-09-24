@@ -1286,12 +1286,13 @@ async function handlePostDirectMessage(req, res, ctx, userId, peerId) {
     broadcast([toId], 'dmessage', message);
 
     // BPM（轻流）推送：经 simple-server 注入的钩子桥接（本模块零 qingflow 依赖）。
-    // 单聊消息 → 轻流/企微，仅推接收方，链接直达接收方在该项目下的单聊界面（区别于群聊推送）。
+    // 单聊消息 → 轻流/企微，仅推接收方，链接直达接收方与发送方（peer=senderId）的单聊界面。
     if (typeof ctx.onDirectMessage === 'function') {
         try {
             const r = ctx.onDirectMessage({
                 projectId,
                 projectName: project.name || '项目',
+                senderId: String(userId),
                 senderName,
                 snippet: previewText,
                 mentionIds: [],

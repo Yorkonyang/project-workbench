@@ -104,12 +104,13 @@ Props 增加：`mode: 'project' | 'direct'`（默认 project）、`peerId`。
 
 > **修订（2026-09-24，第二轮）**：在首轮「群聊经轻流触达企微、链接直达项目群聊页」基础上，
 > 新增**单聊推送**——项目下成员给同项目另一成员发单聊，经轻流推送给**接收方本人**，
-> 链接直达接收方在该项目下的单聊界面（`/messages?peer=<receiverId>&project=<id>`），
-> 接收方点开即可直接回复。两项推送均经 SSO 免登，与任务推送（`/task/:id`）严格区分。
+> 链接直达接收方在该项目下与发送方的单聊界面（`/messages?peer=<senderId>&project=<id>`，
+> **peer=发送方**），接收方点开即可直接回复。两项推送均经 SSO 免登，与任务推送（`/task/:id`）严格区分。
 >
 > **实现方式（chat.js 始终零 qingflow 依赖）**：
 > - `server/qingflow.js` 新增 `notifyChatMessage()`（群聊，`[项目群聊]` 前缀、zrr=所有项目成员并集、链接 `/messages?project=<id>`）
->   与 `notifyDirectMessage()`（单聊，`[项目私信]` 前缀、zrr=仅接收方、链接 `/messages?peer=<receiverId>&project=<id>`）；
+>   与 `notifyDirectMessage()`（单聊，`[项目私信]` 前缀、zrr=仅接收方、链接 `/messages?peer=<senderId>&project=<id>`，
+>   **peer 用发送方 id**——链接由接收方点开，从其视角单聊对象是发送方；误用 receiverId 会落成「和自己的单聊」而落到空的项目级视图（2026-09-24 实测修正））；
 >   二者均支持可选 `chatQsourceId` 独立 Q-Source（未配置则回退共用任务 Q-Source）。
 > - `simple-server.js` 构造 ctx 时注入 `onGroupMessage` / `onDirectMessage` 两个钩子桥接：
 >   群聊推所有项目成员（接收人=项目成员并集，排除发送者），单聊仅推接收方一人。
@@ -128,7 +129,7 @@ Props 增加：`mode: 'project' | 'direct'`（默认 project）、`peerId`。
 3. 单聊：A 点开项目 → 展开成员卡片 → 点 B → 发消息 → B 红点 +1（Sidebar 总数含单聊）、铃铛出现「XX 给你发来消息」、桌面通知+提示音；B 回复仅 A 可见；双方互看历史一致升序；撤回双端同步。
 4. 未读：`GET /api/chat/unread` 的 total=群+单；进入单聊后该 peer 归零、群未读不受影响。
 5. 渲染：接收方视角所有他人消息均显示头像+姓名；引用条显示原发送人。
-6. **BPM 隔离审计**：`server/chat.js` 中 qingflow 零引用（推送经 ctx 钩子触发，不直接调用）；群聊/单聊消息均经 `onGroupMessage`/`onDirectMessage` 钩子桥接轻流，链接分别指向群聊页（`/messages?project=<id>`）与单聊界面（`/messages?peer=<receiverId>&project=<id>`），与任务推送（`/task/:id`）区分。
+6. **BPM 隔离审计**：`server/chat.js` 中 qingflow 零引用（推送经 ctx 钩子触发，不直接调用）；群聊/单聊消息均经 `onGroupMessage`/`onDirectMessage` 钩子桥接轻流，链接分别指向群聊页（`/messages?project=<id>`）与单聊界面（`/messages?peer=<senderId>&project=<id>`，peer=发送方），与任务推送（`/task/:id`）区分。
 7. 权限：未登录 401；peer 不存在 404；给自己发消息 400；撤回他人消息（非 admin）403。
 8. 生产库 `data/workbench.db` 测试期间零写入（QA 用副本）。
 

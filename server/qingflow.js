@@ -776,10 +776,11 @@ async function notifyChatMessage(info) {
 
 // ===== 项目单聊消息推送（2026-09-24 新增，用户需求补充） =====
 // 单聊消息经轻流触达企微：仅推送给「接收方」，链接直达接收方在该项目下的单聊界面
-// （/messages?peer=<receiverId>&project=<projectId>），接收方点击后可直接回复。
+// （/messages?peer=<发送方Id>&project=<projectId>，peer=发送方——接收方点开后直接看到与
+// 发送方的对话并可回复），接收方点击后可直接回复。
 // 与群聊推送的区别：群聊推给所有成员、链接指向群聊页；单聊只推接收方、链接指向其单聊界面。
 async function notifyDirectMessage(info) {
-    const { projectId, projectName, senderName, snippet, mentionIds = [], receiverId } = info || {};
+    const { projectId, projectName, senderName, senderId, snippet, mentionIds = [], receiverId } = info || {};
     if (!projectId || !receiverId) return { success: false, error: '缺少 projectId/receiverId' };
 
     const receiver = db.getMemberById(receiverId);
@@ -796,7 +797,11 @@ async function notifyDirectMessage(info) {
         if (m?.name) text = text.split(id).join(m.name);
     }
 
-    const linkPath = `/messages?peer=${encodeURIComponent(receiverId)}&project=${encodeURIComponent(projectId)}`;
+    // 链接里的 peer 必须是「发送方」：链接由接收方点开，从其视角单聊对象是发送方
+    // （与站内通知 link=peer发送方 口径一致）。此前误用 receiverId，接收方点开会变成
+    // 「和自己的单聊」（后端禁止自聊）→ 落到空的项目级视图（2026-09-24 实测修正）。
+    const linkPeer = senderId || receiverId; // senderId 缺失（旧调用方）时退回旧行为，保持可用
+    const linkPath = `/messages?peer=${encodeURIComponent(linkPeer)}&project=${encodeURIComponent(projectId)}`;
     const payload = {
         bt: `[项目私信] ${projectName || '项目'}`,   // 标题（前缀用于与群聊/任务推送区分）
         ms: `${senderName || '成员'}：${text}`,     // 描述：发送者 + 消息摘要
@@ -805,8 +810,8 @@ async function notifyDirectMessage(info) {
         jzrq: new Date().toISOString().split('T')[0],
         ssxm: projectName || '项目工作台',
         zht: '未读',
-        // 直达链接：仅接收方（签给接收方邮箱）可免登直达其在项目下的单聊界面，可直接回复
-        taskUrl: buildFrontendUrl(linkPath, receiverEmail, { type: 'project_direct', id: projectId, peer: receiverId }),
+        // 直达链接：仅接收方（签给接收方邮箱）可免登直达其在项目下与发送方的单聊界面，可直接回复
+        taskUrl: buildFrontendUrl(linkPath, receiverEmail, { type: 'project_direct', id: projectId, peer: linkPeer }),
     };
 
     console.log('[轻流推送] 单聊消息通知:', payload);
