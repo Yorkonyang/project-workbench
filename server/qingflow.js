@@ -20,7 +20,8 @@ function buildDefaultPassword(email) {
 }
 
 // 配置文件路径（使用绝对路径避免 __dirname 问题）
-const CONFIG_PATH = path.resolve('D:/AI/project-workbench/data/qingflow-config.json');
+// 配置文件路径：支持环境变量 QINGFLOW_CONFIG_PATH 覆盖（隔离测试/自定义部署用），默认沿用原绝对路径
+const CONFIG_PATH = path.resolve(process.env.QINGFLOW_CONFIG_PATH || 'D:/AI/project-workbench/data/qingflow-config.json');
 
 // 加载持久化配置
 function loadPushConfig() {
@@ -53,6 +54,9 @@ pushConfig.baseUrl = pushConfig.baseUrl || '';
 pushConfig.qsourceId = pushConfig.qsourceId || '';
 // 前端可访问地址：责任人在轻流通知中点击链接时跳转到的地址（默认本地，需在生产环境配置为内网/公网地址）
 pushConfig.frontendBaseUrl = pushConfig.frontendBaseUrl || '';
+// 群聊推送专用 Q-Source（可选）：配置后群聊消息推送到独立轻流表单/流程，与任务推送数据分离；
+// 留空则与任务共用 qsourceId（复用轻流侧同一自动化，卡片链接字段自动区分任务页/群聊页）。
+pushConfig.chatQsourceId = pushConfig.chatQsourceId || '';
 
 // ===== 同步配置（开放平台 OAuth） =====
 // 用于通过开放平台 API 同步组织架构和成员
@@ -723,8 +727,56 @@ async function notifyProjectArchived(info) {
     return await sendToQSource(payload);
 }
 
-async function sendToQSource(payload) {
-    const { baseUrl, qsourceId } = pushConfig;
+// ===== 项目群聊消息推送（2026-09-24 新增） =====
+// 需求：项目群聊消息经轻流触达企微，但链接必须直达「项目群聊」页（/messages?project=<id>），
+//      与任务类推送（taskUrl=/task/:id）区分开——收信人点击链接后 SSO 免登直达群聊，可直接回复。
+// 与任务推送的差异：
+//   - 标题固定带 [项目群聊] 前缀，收信人在企微卡片上一眼区分消息类型；
+//   - taskUrl 指向群聊页（ref type='project_chat'，不参与任务完成时的 ticket 失效）；
+//   - 配置了 chatQsourceId 时推送独立 Q-Source，否则与任务共用（轻流侧同一表单/自动化即可复用）。
+async function notifyChatMessage(info) {
+    const { projectId, projectName, senderName, snippet, mentionIds = [], recipientIds = [], isMention = false } = info || {};
+    if (!projectId) return { success: false, error: '缺少 projectId' };
+
+    // 摘要中的 @<userId> 替换为 @<姓名>（id 部分替换，保留原文 @ 前缀），企微卡片文案更友好
+    let text = snippet || '';
+    for (const id of mentionIds) {
+        const m = db.getMemberById(id);
+        if (m?.name) text = text.split(id).join(m.name);
+    }
+
+    // 收件人邮箱（除发送者外的群成员），多个分号拼接（与 notifyOverdue 多值口径一致）
+    const emails = recipientIds
+        .map((id) => {
+            const m = db.getMemberById(id) || db.getMemberByName(id) || db.getMemberByEmail(id);
+            return m?.email || '';
+        })
+        .filter(Boolean);
+    if (!emails.length) {
+        console.log('[轻流推送] 群聊消息无有效收件人邮箱，跳过推送');
+        return { success: false, error: '无有效收件人邮箱' };
+    }
+    const signEmail = emails[0] || ''; // SSO 链接单签名，签给第一个收件人（与 notifyOverdue 口径一致）
+
+    const payload = {
+        bt: `[项目群聊] ${projectName || '项目'}`,   // 标题（前缀用于与任务推送区分）
+        ms: `${senderName || '成员'}：${text}`,      // 描述：发送者 + 消息摘要（@提及已替换为姓名）
+        zrr: emails.join(';'),                       // 责任人（群成员邮箱，多值分号分隔）
+        yxj: isMention ? '高优先级' : '中优先级',     // 有 @ 提及时升为高优先级
+        jzrq: new Date().toISOString().split('T')[0],
+        ssxm: projectName || '项目工作台',
+        zht: isMention ? '有人@你' : '未读',
+        // 直达链接：点击后 SSO 免登并跳转到该项目群聊页（/messages?project=<id>），可直接回复
+        taskUrl: buildFrontendUrl(`/messages?project=${encodeURIComponent(projectId)}`, signEmail, { type: 'project_chat', id: projectId }),
+    };
+
+    console.log('[轻流推送] 群聊消息通知:', payload);
+    return await sendToQSource(payload, pushConfig.chatQsourceId || undefined);
+}
+
+async function sendToQSource(payload, qsourceIdOverride) {
+    const { baseUrl } = pushConfig;
+    const qsourceId = qsourceIdOverride || pushConfig.qsourceId;
 
     if (!qsourceId) {
         console.warn('[轻流推送] Q-Source ID 未配置');
@@ -786,6 +838,7 @@ module.exports = {
     notifyTaskCreated,
     notifyTodoCreated,
     notifyOverdue,
+    notifyChatMessage,
     notifyProjectMerged,
     notifyProjectArchived,
     addFormData,

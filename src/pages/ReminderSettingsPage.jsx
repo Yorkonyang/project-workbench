@@ -20,7 +20,7 @@ export default function ReminderSettingsPage() {
   const [saved, setSaved] = useState(false);
 
   // 轻流 BPM 配置
-  const [bpmConfig, setBpmConfig] = useState({ baseUrl: '', qsourceId: '', frontendBaseUrl: '', ssoSecret: '' });
+  const [bpmConfig, setBpmConfig] = useState({ baseUrl: '', qsourceId: '', frontendBaseUrl: '', ssoSecret: '', chatQsourceId: '' });
   const [bpmSaving, setBpmSaving] = useState(false);
   const [bpmTesting, setBpmTesting] = useState(false);
   const [bpmTestResult, setBpmTestResult] = useState(null);
@@ -32,6 +32,7 @@ export default function ReminderSettingsPage() {
         qsourceId: cfg.qsourceId || '',
         frontendBaseUrl: cfg.frontendBaseUrl || '',
         ssoSecret: cfg.ssoSecret || '',
+        chatQsourceId: cfg.chatQsourceId || '',
       });
     }).catch(() => {});
   }, []);
@@ -360,6 +361,20 @@ export default function ReminderSettingsPage() {
 
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                群聊推送专用 Q-Source ID（可选）
+              </label>
+              <Input
+                value={bpmConfig.chatQsourceId}
+                onChange={(e) => setBpmConfig(f => ({ ...f, chatQsourceId: e.target.value }))}
+                placeholder="留空则与任务共用上方 Q-Source ID"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                项目群聊消息也会推送到轻流触达企微，链接直达「项目群聊」页（可直接回复），与任务推送区分。若希望群聊记录进入独立的轻流表单/流程，在此填写另一个 Q-Source 的 UUID；留空则与任务共用同一表单（推荐，轻流侧无需新建自动化）。
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
                 SSO 签名密钥（免登录直达）
               </label>
               <Input
@@ -407,6 +422,7 @@ export default function ReminderSettingsPage() {
                 <li>• 优先级 → yxj（紧急/高/中/低）</li>
                 <li>• 截止日期 → jzrq</li>
                 <li>• 所属项目 → ssxm</li>
+                <li>• 群聊消息 → 标题带 [项目群聊] 前缀，链接直达群聊页（与任务链接区分）</li>
                 <li>• 任务链接 → taskUrl（前端直达链接，责任人点击跳转到任务详情填写进度/关闭待办）</li>
               </ul>
             </div>

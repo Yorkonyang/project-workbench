@@ -100,10 +100,19 @@ Props 增加：`mode: 'project' | 'direct'`（默认 project）、`peerId`。
 - `ChatWindow.buildGroups` 只再控制 `showTime`（同发送者 5 分钟内末条显示时间），不再影响姓名/头像。
 - 引用条保持显示 `replyTo.senderName`（已实现）。
 
-## 5. BPM 隔离（需求 1，约束性）
-1. chat.js 顶部注释与发消息副作用处注释显式声明：「聊天消息仅产生站内通知（notifications 表），严禁接入 qingflow/BPM 推送」。
-2. 单聊通知 type=`chat_direct`，天然不匹配 POST /api/notifications 的 `overdue|escalation` 推送白名单。
-3. 不修改 qingflow.js 与任何既有推送调用点。
+## 5. BPM 隔离（需求 1，2026-09-24 修订）
+> **修订（2026-09-24）**：用户新需求——群聊消息需经轻流触达企微，且推送链接直达项目群聊页
+> （`/messages?project=<id>`，经 SSO 免登），与任务推送（`/task/:id`）区分开。
+> 实现方式：`server/qingflow.js` 新增 `notifyChatMessage()`（标题带 `[项目群聊]` 前缀、
+> 可选 `chatQsourceId` 独立 Q-Source）；`chat.js` 仍**零 qingflow 依赖**，
+> 由 `simple-server.js` 构造 ctx 时注入 `onGroupMessage` 钩子桥接。
+> 群聊消息每条推送一条记录（fire-and-forget，失败不影响消息本身）；**单聊仍不推送**。
+> 另：`QINGFLOW_CONFIG_PATH` 环境变量可覆盖推送配置文件路径（隔离测试/部署用）。
+
+历史约束（原实现，部分已被上述修订取代）：
+1. chat.js 本体仍不 require/call qingflow；推送经 ctx 钩子触发（2026-09-24 修订后保留该分层）。
+2. 单聊通知 type=`chat_direct`，不匹配 POST /api/notifications 的 `overdue|escalation` 推送白名单，且不在 onGroupMessage 桥接范围。
+3. 既有任务/待办/逾期/项目推送调用点未改动，taskUrl 语义不变。
 
 ## 6. 验收标准
 

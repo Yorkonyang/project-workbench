@@ -2403,6 +2403,17 @@ const server = http.createServer(async (req, res) => {
     if (chat.isChatPath(pathname)) {
         const handled = await chat.handle(req, res, {
             pathname, method, url, loadData, saveData, sendResponse, parseBody, generateId, ac, dbDir: DB_DIR,
+            // 群聊消息 → 轻流/企微推送（2026-09-24 新增）：chat.js 保持零 qingflow 依赖，经此钩子桥接。
+            // 链接直达项目群聊页（/messages?project=<id>），与任务推送（/task/:id）区分开。
+            onGroupMessage: (info) => {
+                qingflow.notifyChatMessage(info)
+                    .then((r) => {
+                        if (r && r.success === false) {
+                            console.warn('[群聊BPM推送] 未成功:', r.error || r.errMsg || r.errCode || '');
+                        }
+                    })
+                    .catch((e) => console.error('[群聊BPM推送] 失败(不影响消息发送):', e.message));
+            },
         });
         if (handled) return;
     }

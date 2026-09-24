@@ -25,13 +25,14 @@
 
 /**
  * ============================================================================
- *  BPM（轻流）隔离约束（需求 1，强约束）
+ *  BPM（轻流）隔离约束（需求 1，2026-09-24 修订）
  * ----------------------------------------------------------------------------
- *  聊天模块（群聊 + 单聊）只会产生「站内通知」（data.notifications 集合），
- *  严禁 require 或调用 qingflow 模块，严禁触发任何 BPM（轻流）推送。
- *  单聊通知 type = 'chat_direct'，天然不匹配 POST /api/notifications 的
- *  'overdue' | 'escalation' 推送白名单，因此不会桥接到 BPM。
- *  任何聊天消息的副作用都不得触碰 qingflow.js 或任何既有推送调用点。
+ *  本模块（chat.js）仍**严禁 require 或直接调用 qingflow 模块**——保持零 qingflow 依赖。
+ *  2026-09-24 用户新需求：群聊消息需经轻流触达企微，且链接直达项目群聊页
+ *  （/messages?project=<id>，区别于任务推送的 /task/:id）。实现方式：
+ *  simple-server.js 在构造 ctx 时注入 onGroupMessage 钩子（内部桥接 qingflow），
+ *  本模块仅在群聊消息落库后调用 ctx.onGroupMessage(...)，不感知推送实现。
+ *  单聊仍不推送、不产生任何 BPM 副作用；单聊通知 type='chat_direct' 不在桥接范围。
  * ============================================================================
  */
 
@@ -934,6 +935,27 @@ async function handlePostMessage(req, res, ctx, userId, projectId) {
 
     // SSE 推送：仅发给收件人，发送者本人不收取自己的消息
     broadcast(recipients, 'message', message);
+
+    // BPM（轻流）推送：经 simple-server 注入的钩子桥接（本模块零 qingflow 依赖）。
+    // 群聊消息 → 轻流/企微，链接直达项目群聊页；fire-and-forget，不阻塞响应、失败不影响消息本身。
+    if (typeof ctx.onGroupMessage === 'function') {
+        try {
+            const r =             ctx.onGroupMessage({
+                projectId,
+                projectName,
+                senderName,
+                snippet: previewText,
+                mentionIds: mentions,
+                recipientIds: recipients,
+                isMention: mentions.length > 0,
+            });
+            if (r && typeof r.catch === 'function') {
+                r.catch((e) => console.error('[群聊BPM推送] 失败(不影响消息发送):', e.message));
+            }
+        } catch (e) {
+            console.error('[群聊BPM推送] 钩子执行异常(不影响消息发送):', e.message);
+        }
+    }
 
     sendResponse(res, 200, message);
 }
